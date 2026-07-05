@@ -67,3 +67,28 @@ def test_is_read_only_command_rejects_redirection_from_allowlisted_command():
     assert not is_read_only_command("echo hi > out.txt")
     assert not is_read_only_command("cat file.txt | tee copy.txt")
     assert not is_read_only_command("echo `rm -rf /`")
+
+
+def test_is_read_only_command_rejects_newline_chained_command():
+    assert not is_read_only_command("ls\nrm -rf important_dir")
+
+
+def test_is_read_only_command_rejects_piped_command():
+    assert not is_read_only_command("find . -name '*.log' | xargs rm")
+
+
+def test_is_read_only_command_rejects_backgrounded_command():
+    assert not is_read_only_command("echo hi & rm -rf output")
+
+
+def test_is_read_only_command_rejects_dangerous_find_flags():
+    assert not is_read_only_command("find . -delete")
+    assert not is_read_only_command("find . -name '*.log' -exec rm {} ;")
+
+
+def test_is_read_only_command_rejects_process_substitution():
+    assert not is_read_only_command("diff <(cat a.txt) <(rm -rf ./data)")
+
+
+def test_is_read_only_command_allows_multi_statement_read_only_chain():
+    assert is_read_only_command("ls -la; pwd; echo done")
