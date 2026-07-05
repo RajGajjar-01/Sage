@@ -1,0 +1,200 @@
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any, cast
+
+from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
+
+from app.core.config import Settings
+from app.models.agent import Message
+
+_RATE_LIMIT_MARKERS = (
+    "rate limit",
+    "quota",
+    "exceeded",
+    "429",
+    "insufficient",
+    "billing",
+    "credits",
+    "unauthorized",
+    "invalid api key",
+    "api key",
+)
+
+
+class NoProviderConfiguredError(Exception):
+    """Raised when no LLM provider has an API key set."""
+
+
+class ProvidersExhaustedError(Exception):
+    """Raised when every configured provider failed for a single completion request."""
+
+
+@dataclass(frozen=True)
+class LlmProvider:
+    name: str
+    api_key: str
+    model: str
+    endpoint: str
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int | None = None
+
+    @property
+    def total(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+
+@dataclass(frozen=True)
+class LlmMetrics:
+    provider: str
+    model: str
+    time_to_first_token_ms: float
+    total_duration_ms: float
+    usage: TokenUsage
+
+
+def load_providers(settings: Settings) -> list[LlmProvider]:
+    """Build the ordered provider list from configured API keys (Groq tried first)."""
+    providers = []
+    if settings.GROQ_API_KEY:
+        providers.append(
+            LlmProvider(
+                "GROQ",
+                settings.GROQ_API_KEY,
+                settings.GROQ_MODEL,
+                settings.GROQ_ENDPOINT,
+            )
+        )
+    if settings.ZHIPU_API_KEY:
+        providers.append(
+            LlmProvider(
+                "ZHIPU",
+                settings.ZHIPU_API_KEY,
+                settings.ZHIPU_MODEL,
+                settings.ZHIPU_ENDPOINT,
+            )
+        )
+    return providers
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in _RATE_LIMIT_MARKERS)
+
+
+class LlmService:
+    """OpenAI-compatible chat completions client with multi-provider fallback."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._providers = load_providers(settings)
+        if not self._providers:
+            raise NoProviderConfiguredError(
+                "No LLM providers configured. Set GROQ_API_KEY and/or ZHIPU_API_KEY."
+            )
+        self._provider_index = 0
+        self._client = self._build_client(self.active_provider)
+
+    @property
+    def providers(self) -> list[LlmProvider]:
+        return self._providers
+
+    @property
+    def active_provider(self) -> LlmProvider:
+        return self._providers[self._provider_index]
+
+    def switch_provider(self, provider: LlmProvider) -> None:
+        self._provider_index = self._providers.index(provider)
+        self._client = self._build_client(provider)
+
+    def switch_to_next_provider(self) -> bool:
+        """Round-robin to the next provider. Returns False once it has cycled back."""
+        next_index = (self._provider_index + 1) % len(self._providers)
+        if next_index == self._provider_index:
+            return False
+        self._provider_index = next_index
+        self._client = self._build_client(self.active_provider)
+        return True
+
+    def _build_client(self, provider: LlmProvider) -> AsyncOpenAI:
+        return AsyncOpenAI(
+            api_key=provider.api_key,
+            base_url=provider.endpoint,
+            timeout=self._settings.LLM_TIMEOUT_SECONDS,
+        )
+
+    @staticmethod
+    def _to_chat_message(message: Message) -> dict[str, Any]:
+        role = "user" if message.role == "tool_result" else message.role
+        return {"role": role, "content": message.content}
+
+    async def complete(
+        self,
+        history: list[Message],
+        system_prompt: str,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+    ) -> tuple[str, TokenUsage, LlmMetrics]:
+        """Stream a chat completion, falling back to the next provider on rate-limit errors."""
+        chat_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt}
+        ]
+        chat_messages.extend(self._to_chat_message(m) for m in history)
+
+        attempts = 0
+        last_error: Exception | None = None
+
+        while attempts < len(self._providers):
+            attempts += 1
+            provider = self.active_provider
+            full_response: list[str] = []
+            usage = TokenUsage()
+            first_token_ms = 0.0
+            first_token_seen = False
+            started = time.perf_counter()
+
+            try:
+                stream = await self._client.chat.completions.create(
+                    model=provider.model,
+                    messages=cast(list[ChatCompletionMessageParam], chat_messages),
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+                async for chunk in stream:
+                    if chunk.choices:
+                        delta = chunk.choices[0].delta.content
+                        if delta:
+                            if not first_token_seen:
+                                first_token_ms = (time.perf_counter() - started) * 1000
+                                first_token_seen = True
+                            full_response.append(delta)
+                            if on_token is not None:
+                                await on_token(delta)
+                    if chunk.usage is not None:
+                        usage = TokenUsage(
+                            prompt_tokens=chunk.usage.prompt_tokens,
+                            completion_tokens=chunk.usage.completion_tokens,
+                        )
+
+                total_ms = (time.perf_counter() - started) * 1000
+                metrics = LlmMetrics(
+                    provider.name, provider.model, first_token_ms, total_ms, usage
+                )
+                return "".join(full_response), usage, metrics
+
+            except Exception as exc:
+                last_error = exc
+                if is_rate_limit_error(exc) and self.switch_to_next_provider():
+                    continue
+                raise ProvidersExhaustedError(
+                    f"All providers exhausted: {exc}"
+                ) from exc
+
+        raise ProvidersExhaustedError(
+            f"All providers exhausted after {attempts} attempts: {last_error}"
+        )

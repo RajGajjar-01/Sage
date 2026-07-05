@@ -58,6 +58,9 @@ ignore = [
 [tool.ruff.lint.isort]
 known-third-party = ["fastapi", "pydantic"]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.mypy]
 strict = true
 exclude = ["venv", ".venv"]
