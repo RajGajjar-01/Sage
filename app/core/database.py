@@ -1,3 +1,4 @@
+import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -57,6 +58,15 @@ async def create_connection() -> aiosqlite.Connection:
     """Open the shared SQLite connection and make sure the schema exists."""
     db_path = Path(settings.DB_PATH).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not os.access(db_path.parent, os.W_OK) or (
+        db_path.exists() and not os.access(db_path, os.W_OK)
+    ):
+        raise PermissionError(
+            f"Cannot write to {db_path} -- it may be owned by a different user "
+            "(e.g. left over from a `docker compose` run as root). Try: "
+            f"sudo chown -R $(whoami) {db_path.parent}  (or delete that directory and let it recreate)."
+        )
 
     connection = await aiosqlite.connect(db_path)
     connection.row_factory = aiosqlite.Row

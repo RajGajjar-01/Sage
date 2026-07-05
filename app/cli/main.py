@@ -41,7 +41,11 @@ def version() -> None:
 
 async def _run() -> None:
     console = Console()
-    connection = await create_connection()
+    try:
+        connection = await create_connection()
+    except PermissionError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
 
     try:
         sandbox = Sandbox(settings.WORKSPACE)
