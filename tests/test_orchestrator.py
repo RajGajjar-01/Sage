@@ -69,25 +69,30 @@ def _settings():
     )
 
 
-def _orchestrator(tmp_path, connection, llm, ui):
+def _orchestrator(tmp_path, connection, llm, ui, settings=None, prompt_enhancer=None):
     sandbox = Sandbox(tmp_path / "workspace")
     return AgentOrchestrator(
         sandbox=sandbox,
         llm=llm,
         shell=ShellExecutor(sandbox, timeout_seconds=5),
         file_tools=FileTools(sandbox),
-        prompt_enhancer=_NoOpEnhancer(),
+        prompt_enhancer=prompt_enhancer or _NoOpEnhancer(),
         sessions=SessionRepository(connection),
         messages=MessageRepository(connection),
         executions=ExecutionRepository(connection),
         ui=ui,
-        settings=_settings(),
+        settings=settings or _settings(),
     )
 
 
 class _NoOpEnhancer:
     async def enhance(self, user_input: str) -> tuple[str, bool]:
         return user_input, False
+
+
+class _BrokenEnhancer:
+    async def enhance(self, user_input: str) -> tuple[str, bool]:
+        raise RuntimeError("network blip")
 
 
 @pytest.mark.asyncio
@@ -241,3 +246,46 @@ async def test_explicit_exit_command_marks_session_completed(tmp_path, connectio
     assert outcome is SessionOutcome.ENDED
     updated = await orchestrator.sessions.get(session.id)
     assert updated.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_plan_approval_does_not_reset_step_budget(tmp_path, connection):
+    llm = FakeLlm(["## Plan\n\nDo it.\n```bash\nexit\n```", "Done."])
+    ui = FakeUI(confirm_answers=[True])
+    settings = _settings()
+    settings.MAX_AGENT_STEPS = 1
+    orchestrator = _orchestrator(tmp_path, connection, llm, ui, settings=settings)
+    await orchestrator.start_session("test session")
+
+    outcome = await orchestrator.send_message("build me something")
+
+    assert outcome is SessionOutcome.CONTINUE
+    assert len(llm.calls) == 1
+    assert any("Reached" in n for n in ui.notifications)
+
+
+@pytest.mark.asyncio
+async def test_sh_fence_is_stripped_from_assistant_text(tmp_path, connection):
+    llm = FakeLlm(["Here's what I'll do.\n```sh\nls\n```", "Done."])
+    ui = FakeUI()
+    orchestrator = _orchestrator(tmp_path, connection, llm, ui)
+    await orchestrator.start_session("test session")
+
+    await orchestrator.send_message("list files")
+
+    assert ui.assistant_messages[0] == "Here's what I'll do."
+
+
+@pytest.mark.asyncio
+async def test_enhancer_failure_falls_back_to_original_input(tmp_path, connection):
+    llm = FakeLlm(["Just chatting, no action needed."])
+    ui = FakeUI()
+    orchestrator = _orchestrator(
+        tmp_path, connection, llm, ui, prompt_enhancer=_BrokenEnhancer()
+    )
+    await orchestrator.start_session("test session")
+
+    outcome = await orchestrator.send_message("hello")
+
+    assert outcome is SessionOutcome.CONTINUE
+    assert llm.calls[0][-1].content == "hello"

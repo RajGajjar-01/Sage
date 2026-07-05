@@ -11,6 +11,7 @@ from app.repositories.execution_repository import ExecutionRepository
 from app.repositories.message_repository import MessageRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.action_parser import (
+    COMMAND_BLOCK,
     ActionType,
     extract,
     get_action_type,
@@ -93,7 +94,10 @@ class AgentOrchestrator:
         is_first_message = not any(m.role == "user" for m in self._history)
         enhanced_input = user_input
         if is_first_message:
-            enhanced, was_enhanced = await self.prompt_enhancer.enhance(user_input)
+            try:
+                enhanced, was_enhanced = await self.prompt_enhancer.enhance(user_input)
+            except Exception:
+                enhanced, was_enhanced = user_input, False
             if was_enhanced and await self.ui.confirm(
                 f"Use enhanced prompt?\n\n{enhanced}", default=True
             ):
@@ -138,7 +142,10 @@ class AgentOrchestrator:
             assert command is not None
 
             if is_exit(command):
-                return await self._handle_exit(text_part)
+                outcome = await self._handle_exit(text_part)
+                if outcome is not None:
+                    return outcome
+                continue  # plan approved — keep executing within this same step/doom-loop budget
 
             trimmed = command.strip()
             recent_commands.append(trimmed)
@@ -227,7 +234,8 @@ class AgentOrchestrator:
         )
         return True
 
-    async def _handle_exit(self, text_part: str) -> SessionOutcome:
+    async def _handle_exit(self, text_part: str) -> SessionOutcome | None:
+        """Handle an `exit` bash action. Returns None to keep looping (plan approved)."""
         assert self._session is not None
 
         if "## Plan" in text_part:
@@ -241,7 +249,7 @@ class AgentOrchestrator:
                         content="Plan approved. Start executing step by step.",
                     )
                 )
-                return await self._agent_loop()
+                return None
             return SessionOutcome.CONTINUE
 
         await self.sessions.update_status(self._session.id, "completed")
@@ -266,7 +274,7 @@ class AgentOrchestrator:
 
 
 def _extract_text_part(response: str) -> str:
-    text = re.sub(r"```bash\s*\n[\s\S]*?```", "", response, flags=re.IGNORECASE)
+    text = COMMAND_BLOCK.sub("", response)
     text = re.sub(
         r"<(write_file|read_file|list_dir|create_dir|delete_file)\b[^>]*>[\s\S]*?</\1>",
         "",
