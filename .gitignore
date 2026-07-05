@@ -64,3 +64,6 @@ data/
 workspace/
 *.db
 *.db-journal
+
+# Local tooling state
+.claude/
