@@ -63,3 +63,46 @@ def test_check_command_rejects_cd_outside_workspace(sandbox):
 
 def test_check_command_allows_cd_within_workspace(sandbox):
     sandbox.check_command(f"cd {sandbox.root}/project && ls")
+
+
+def test_check_command_rejects_tilde_cd(sandbox):
+    with pytest.raises(SandboxViolationError):
+        sandbox.check_command("cd ~ && ls")
+
+
+def test_check_command_rejects_env_var_cd(sandbox):
+    with pytest.raises(SandboxViolationError):
+        sandbox.check_command("cd $HOME && ls")
+
+
+def test_check_command_rejects_env_var_path(sandbox):
+    with pytest.raises(SandboxViolationError):
+        sandbox.check_command("cat $HOME/.ssh/id_rsa")
+
+
+def test_check_command_rejects_second_cd_in_chain(sandbox):
+    with pytest.raises(SandboxViolationError):
+        sandbox.check_command("cd project && ls; cd $HOME && ls")
+
+
+def test_check_command_rejects_symlink_escape(sandbox):
+    outside = sandbox.root.parent / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    (sandbox.root / "link").symlink_to(outside)
+
+    with pytest.raises(SandboxViolationError):
+        sandbox.check_command("cat link/secret.txt")
+
+
+def test_check_command_rejects_symlink_cd_escape(sandbox):
+    outside = sandbox.root.parent / "outside"
+    outside.mkdir()
+    (sandbox.root / "link").symlink_to(outside)
+
+    with pytest.raises(SandboxViolationError):
+        sandbox.check_command("cd link && ls")
+
+
+def test_check_command_allows_url_looking_token(sandbox):
+    sandbox.check_command("curl https://example.com/foo")

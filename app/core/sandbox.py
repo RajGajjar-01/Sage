@@ -1,7 +1,8 @@
+import os
 import re
 from pathlib import Path
 
-_ABS_PATH_TOKEN = re.compile(r"(?<![\w./-])/(?:[^\s'\"`\\]|\\\s)*")
+_TOKEN = re.compile(r"[^\s'\"`;&|()<>]+")
 _CD_TARGET = re.compile(r"\bcd\s+([^\s;&|]+)")
 
 
@@ -36,23 +37,39 @@ class Sandbox:
             )
         return full
 
+    def _resolve_relative_to_root(self, raw: str) -> Path:
+        expanded = os.path.expandvars(os.path.expanduser(raw))
+        candidate = Path(expanded)
+        return candidate if candidate.is_absolute() else self.root / candidate
+
     def check_command(self, command: str) -> None:
-        """Raise if a shell command references an absolute path outside the workspace."""
+        """Raise if a shell command references a path outside the workspace.
+
+        Expands ~/$VAR per token and resolves symlinks (via contains()) before
+        the containment check, so both variable-expanded absolute paths and
+        relative paths that traverse a symlink out of the workspace are caught.
+        """
         stripped = command.strip()
         if not stripped:
             raise SandboxViolationError("Empty command")
         if ".." in stripped:
             raise SandboxViolationError("Directory traversal not allowed")
 
-        for match in _ABS_PATH_TOKEN.finditer(stripped):
-            token = match.group().rstrip(";&|)]}")
-            if token == "/":
+        for raw_token in _TOKEN.findall(stripped):
+            if "://" in raw_token:
+                continue
+            expanded = os.path.expandvars(os.path.expanduser(raw_token))
+            if expanded == "/":
                 raise SandboxViolationError("Root '/' access not allowed")
-            if not self.contains(Path(token)):
-                raise SandboxViolationError(f"Path outside workspace: {token}")
+            if expanded.startswith("/") or raw_token.startswith("~") or "/" in expanded:
+                full = self._resolve_relative_to_root(raw_token)
+                if not self.contains(full):
+                    raise SandboxViolationError(f"Path outside workspace: {raw_token}")
 
-        cd_match = _CD_TARGET.search(stripped)
-        if cd_match:
-            target = cd_match.group(1).strip("\"'`")
-            if Path(target).is_absolute() and not self.contains(Path(target)):
-                raise SandboxViolationError(f"cd target outside workspace: {target}")
+        for cd_match in _CD_TARGET.finditer(stripped):
+            raw_target = cd_match.group(1).strip("\"'`")
+            full = self._resolve_relative_to_root(raw_target)
+            if not self.contains(full):
+                raise SandboxViolationError(
+                    f"cd target outside workspace: {raw_target}"
+                )
