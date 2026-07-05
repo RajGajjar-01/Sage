@@ -8,6 +8,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from app.core.config import Settings
 from app.models.agent import Message
+from app.models.provider import ProviderCredential
 
 _RATE_LIMIT_MARKERS = (
     "rate limit",
@@ -59,28 +60,29 @@ class LlmMetrics:
     usage: TokenUsage
 
 
-def load_providers(settings: Settings) -> list[LlmProvider]:
-    """Build the ordered provider list from configured API keys (Groq tried first)."""
-    providers = []
+def load_providers(
+    settings: Settings, stored: list[ProviderCredential] | None = None
+) -> list[LlmProvider]:
+    """Build the ordered provider list: env-configured first (Groq tried first),
+    then DB-stored credentials from /connect, which override same-named entries
+    in place rather than reordering them."""
+    providers: dict[str, LlmProvider] = {}
     if settings.GROQ_API_KEY:
-        providers.append(
-            LlmProvider(
-                "GROQ",
-                settings.GROQ_API_KEY,
-                settings.GROQ_MODEL,
-                settings.GROQ_ENDPOINT,
-            )
+        providers["GROQ"] = LlmProvider(
+            "GROQ", settings.GROQ_API_KEY, settings.GROQ_MODEL, settings.GROQ_ENDPOINT
         )
     if settings.ZHIPU_API_KEY:
-        providers.append(
-            LlmProvider(
-                "ZHIPU",
-                settings.ZHIPU_API_KEY,
-                settings.ZHIPU_MODEL,
-                settings.ZHIPU_ENDPOINT,
-            )
+        providers["ZHIPU"] = LlmProvider(
+            "ZHIPU",
+            settings.ZHIPU_API_KEY,
+            settings.ZHIPU_MODEL,
+            settings.ZHIPU_ENDPOINT,
         )
-    return providers
+    for credential in stored or []:
+        providers[credential.name] = LlmProvider(
+            credential.name, credential.api_key, credential.model, credential.endpoint
+        )
+    return list(providers.values())
 
 
 def is_rate_limit_error(exc: Exception) -> bool:
@@ -91,12 +93,16 @@ def is_rate_limit_error(exc: Exception) -> bool:
 class LlmService:
     """OpenAI-compatible chat completions client with multi-provider fallback."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        stored_credentials: list[ProviderCredential] | None = None,
+    ) -> None:
         self._settings = settings
-        self._providers = load_providers(settings)
+        self._providers = load_providers(settings, stored_credentials)
         if not self._providers:
             raise NoProviderConfiguredError(
-                "No LLM providers configured. Set GROQ_API_KEY and/or ZHIPU_API_KEY."
+                "No LLM providers configured. Set GROQ_API_KEY/ZHIPU_API_KEY or run /connect."
             )
         self._provider_index = 0
         self._client = self._build_client(self.active_provider)
@@ -125,6 +131,29 @@ class LlmService:
         self._client = self._build_client(self.active_provider)
         await old_client.close()
         return True
+
+    async def add_provider(self, credential: ProviderCredential) -> None:
+        """Add or update a provider from a stored credential, usable without restarting."""
+        new_provider = LlmProvider(
+            credential.name, credential.api_key, credential.model, credential.endpoint
+        )
+        existing_index = next(
+            (i for i, p in enumerate(self._providers) if p.name == credential.name),
+            None,
+        )
+
+        if existing_index is not None:
+            self._providers[existing_index] = new_provider
+            if existing_index == self._provider_index:
+                old_client = self._client
+                self._client = self._build_client(new_provider)
+                await old_client.close()
+            return
+
+        self._providers.append(new_provider)
+        if len(self._providers) == 1:
+            self._provider_index = 0
+            self._client = self._build_client(new_provider)
 
     def _build_client(self, provider: LlmProvider) -> AsyncOpenAI:
         return AsyncOpenAI(

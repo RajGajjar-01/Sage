@@ -3,6 +3,7 @@ import asyncio
 import typer
 from rich.console import Console
 
+from app.cli.connect import connect_provider
 from app.cli.menu import run_menu
 from app.cli.render import RichConsoleUI
 from app.core.config import settings
@@ -10,6 +11,7 @@ from app.core.database import create_connection
 from app.core.sandbox import Sandbox
 from app.repositories.execution_repository import ExecutionRepository
 from app.repositories.message_repository import MessageRepository
+from app.repositories.provider_repository import ProviderRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.doc_cache import DocCache
 from app.services.file_tools import FileTools
@@ -44,11 +46,22 @@ async def _run() -> None:
 
     try:
         sandbox = Sandbox(settings.WORKSPACE)
-        try:
-            llm = LlmService(settings)
-        except NoProviderConfiguredError as exc:
-            console.print(f"[red]{exc}[/]")
-            raise typer.Exit(code=1) from exc
+        provider_repo = ProviderRepository(connection)
+        stored_credentials = await provider_repo.list()
+
+        llm: LlmService | None = None
+        while llm is None:
+            try:
+                llm = LlmService(settings, stored_credentials)
+            except NoProviderConfiguredError:
+                console.print(
+                    "  [dim]No LLM provider configured yet — let's connect one.[/]"
+                )
+                credential = await connect_provider(console, provider_repo)
+                if credential is None:
+                    console.print("[red]A provider is required to use DotAgent.[/]")
+                    raise typer.Exit(code=1) from None
+                stored_credentials = [credential]
 
         orchestrator = AgentOrchestrator(
             sandbox=sandbox,
@@ -64,7 +77,7 @@ async def _run() -> None:
         )
 
         try:
-            await run_menu(orchestrator, console)
+            await run_menu(orchestrator, console, provider_repo)
         except (KeyboardInterrupt, EOFError):
             console.print("\n  [dim]Interrupted.[/]")
     finally:

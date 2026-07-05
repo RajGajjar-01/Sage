@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, Request, status
 from app.core.database import get_db
 from app.repositories.execution_repository import ExecutionRepository
 from app.repositories.message_repository import MessageRepository
+from app.repositories.provider_repository import ProviderRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.llm_service import LlmService
 
@@ -26,6 +27,12 @@ async def get_execution_repository(
     connection: aiosqlite.Connection = Depends(get_db),
 ) -> AsyncGenerator[ExecutionRepository]:
     yield ExecutionRepository(connection)
+
+
+async def get_provider_repository(
+    connection: aiosqlite.Connection = Depends(get_db),
+) -> AsyncGenerator[ProviderRepository]:
+    yield ProviderRepository(connection)
 
 
 async def get_llm_service(request: Request) -> LlmService:

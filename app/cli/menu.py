@@ -5,12 +5,16 @@ from rich.prompt import IntPrompt, Prompt
 from rich.table import Table
 
 from app.cli.banner import print_banner
+from app.cli.connect import connect_provider
+from app.repositories.provider_repository import ProviderRepository
 from app.services.orchestrator import AgentOrchestrator, SessionOutcome
 
 GOLD = "#F0AA00"
 
 
-async def run_menu(orchestrator: AgentOrchestrator, console: Console) -> None:
+async def run_menu(
+    orchestrator: AgentOrchestrator, console: Console, providers: ProviderRepository
+) -> None:
     print_banner(console)
 
     while True:
@@ -21,6 +25,7 @@ async def run_menu(orchestrator: AgentOrchestrator, console: Console) -> None:
         console.print("  2) Load session")
         console.print("  3) Switch model")
         console.print("  4) Exit")
+        console.print("  [dim](type /connect anytime to add or update a provider)[/]")
         choice = Prompt.ask(
             "  Choice",
             choices=["1", "2", "3", "4"],
@@ -31,9 +36,9 @@ async def run_menu(orchestrator: AgentOrchestrator, console: Console) -> None:
         console.print()
 
         if choice == "1":
-            await _new_chat(orchestrator, console)
+            await _new_chat(orchestrator, console, providers)
         elif choice == "2":
-            await _load_session(orchestrator, console)
+            await _load_session(orchestrator, console, providers)
         elif choice == "3":
             await _switch_model(orchestrator, console)
         else:
@@ -42,7 +47,9 @@ async def run_menu(orchestrator: AgentOrchestrator, console: Console) -> None:
         console.print()
 
 
-async def _new_chat(orchestrator: AgentOrchestrator, console: Console) -> None:
+async def _new_chat(
+    orchestrator: AgentOrchestrator, console: Console, providers: ProviderRepository
+) -> None:
     title = Prompt.ask(
         "  Session title (or press Enter)", default="", console=console
     ).strip()
@@ -54,10 +61,12 @@ async def _new_chat(orchestrator: AgentOrchestrator, console: Console) -> None:
         f"  [dim]Session started:[/] [{GOLD}]{session.id[:8]}[/] · {session.title}"
     )
     console.print()
-    await _chat_loop(orchestrator, console)
+    await _chat_loop(orchestrator, console, providers)
 
 
-async def _load_session(orchestrator: AgentOrchestrator, console: Console) -> None:
+async def _load_session(
+    orchestrator: AgentOrchestrator, console: Console, providers: ProviderRepository
+) -> None:
     sessions = await orchestrator.sessions.list()
     if not sessions:
         console.print("  [dim]No sessions yet. Start a new chat first.[/]")
@@ -86,13 +95,22 @@ async def _load_session(orchestrator: AgentOrchestrator, console: Console) -> No
     session = await orchestrator.resume_session(sessions[pick - 1].id)
     console.print(f"  [dim]Resuming:[/] [{GOLD}]{session.id[:8]}[/] · {session.title}")
     console.print()
-    await _chat_loop(orchestrator, console)
+    await _chat_loop(orchestrator, console, providers)
 
 
-async def _chat_loop(orchestrator: AgentOrchestrator, console: Console) -> None:
+async def _chat_loop(
+    orchestrator: AgentOrchestrator, console: Console, providers: ProviderRepository
+) -> None:
     while True:
         user_input = Prompt.ask(f"  [bold {GOLD}]You ›[/]", console=console).strip()
         if not user_input:
+            continue
+
+        if user_input.lower() == "/connect":
+            credential = await connect_provider(console, providers)
+            if credential is not None:
+                await orchestrator.llm.add_provider(credential)
+            console.print()
             continue
 
         outcome = await orchestrator.send_message(user_input)

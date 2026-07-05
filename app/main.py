@@ -15,14 +15,16 @@ from app.core.exception_handlers import (
     validation_exception_handler,
 )
 from app.core.health import router as health_router
+from app.repositories.provider_repository import ProviderRepository
 from app.services.llm_service import LlmService, NoProviderConfiguredError
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.db = await create_connection()
+    stored_credentials = await ProviderRepository(app.state.db).list()
     try:
-        app.state.llm = LlmService(settings)
+        app.state.llm = LlmService(settings, stored_credentials)
     except NoProviderConfiguredError:
         app.state.llm = None
     yield

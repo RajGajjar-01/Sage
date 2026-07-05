@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS doc_cache (
     expires_at INTEGER NOT NULL,
     UNIQUE(provider, query_key)
 );
+CREATE TABLE IF NOT EXISTS provider_credentials (
+    name       TEXT    PRIMARY KEY,
+    api_key    TEXT    NOT NULL,
+    model      TEXT    NOT NULL,
+    endpoint   TEXT    NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_executions_session ON executions(session_id);
 CREATE INDEX IF NOT EXISTS idx_doc_cache_lookup ON doc_cache(provider, query_key);
