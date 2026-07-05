@@ -35,18 +35,42 @@ def test_service_defaults_to_first_provider():
     assert service.active_provider.name == "GROQ"
 
 
-def test_switch_to_next_provider_round_robins():
+@pytest.mark.asyncio
+async def test_switch_to_next_provider_round_robins():
     service = LlmService(_settings(GROQ_API_KEY="groq-key", ZHIPU_API_KEY="zhipu-key"))
 
-    switched = service.switch_to_next_provider()
+    switched = await service.switch_to_next_provider()
 
     assert switched is True
     assert service.active_provider.name == "ZHIPU"
 
 
-def test_switch_to_next_provider_returns_false_with_single_provider():
+@pytest.mark.asyncio
+async def test_switch_to_next_provider_returns_false_with_single_provider():
     service = LlmService(_settings(GROQ_API_KEY="groq-key"))
-    assert service.switch_to_next_provider() is False
+    assert await service.switch_to_next_provider() is False
+
+
+@pytest.mark.asyncio
+async def test_switch_to_next_provider_closes_old_client():
+    service = LlmService(_settings(GROQ_API_KEY="groq-key", ZHIPU_API_KEY="zhipu-key"))
+    old_client = service._client
+
+    await service.switch_to_next_provider()
+
+    assert old_client.is_closed()
+
+
+@pytest.mark.asyncio
+async def test_switch_provider_closes_old_client():
+    service = LlmService(_settings(GROQ_API_KEY="groq-key", ZHIPU_API_KEY="zhipu-key"))
+    old_client = service._client
+    zhipu = next(p for p in service.providers if p.name == "ZHIPU")
+
+    await service.switch_provider(zhipu)
+
+    assert old_client.is_closed()
+    assert service.active_provider.name == "ZHIPU"
 
 
 @pytest.mark.parametrize(

@@ -109,17 +109,21 @@ class LlmService:
     def active_provider(self) -> LlmProvider:
         return self._providers[self._provider_index]
 
-    def switch_provider(self, provider: LlmProvider) -> None:
+    async def switch_provider(self, provider: LlmProvider) -> None:
+        old_client = self._client
         self._provider_index = self._providers.index(provider)
         self._client = self._build_client(provider)
+        await old_client.close()
 
-    def switch_to_next_provider(self) -> bool:
+    async def switch_to_next_provider(self) -> bool:
         """Round-robin to the next provider. Returns False once it has cycled back."""
         next_index = (self._provider_index + 1) % len(self._providers)
         if next_index == self._provider_index:
             return False
+        old_client = self._client
         self._provider_index = next_index
         self._client = self._build_client(self.active_provider)
+        await old_client.close()
         return True
 
     def _build_client(self, provider: LlmProvider) -> AsyncOpenAI:
@@ -189,7 +193,7 @@ class LlmService:
 
             except Exception as exc:
                 last_error = exc
-                if is_rate_limit_error(exc) and self.switch_to_next_provider():
+                if is_rate_limit_error(exc) and await self.switch_to_next_provider():
                     continue
                 raise ProvidersExhaustedError(
                     f"All providers exhausted: {exc}"

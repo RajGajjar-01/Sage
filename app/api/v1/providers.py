@@ -31,5 +31,5 @@ async def switch_provider(
         return error_response(
             404, "PROVIDER_NOT_FOUND", f"Provider {body.name} is not configured"
         )
-    llm.switch_provider(match)
+    await llm.switch_provider(match)
     return success_response({"active": llm.active_provider.name})

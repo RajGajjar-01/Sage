@@ -35,7 +35,7 @@ async def run_menu(orchestrator: AgentOrchestrator, console: Console) -> None:
         elif choice == "2":
             await _load_session(orchestrator, console)
         elif choice == "3":
-            _switch_model(orchestrator, console)
+            await _switch_model(orchestrator, console)
         else:
             console.print("  [dim]Goodbye.[/]")
             return
@@ -101,7 +101,7 @@ async def _chat_loop(orchestrator: AgentOrchestrator, console: Console) -> None:
             return
 
 
-def _switch_model(orchestrator: AgentOrchestrator, console: Console) -> None:
+async def _switch_model(orchestrator: AgentOrchestrator, console: Console) -> None:
     llm = orchestrator.llm
     if len(llm.providers) <= 1:
         console.print(
@@ -115,7 +115,7 @@ def _switch_model(orchestrator: AgentOrchestrator, console: Console) -> None:
 
     pick = IntPrompt.ask("  Pick a model #", console=console)
     if 1 <= pick <= len(llm.providers):
-        llm.switch_provider(llm.providers[pick - 1])
+        await llm.switch_provider(llm.providers[pick - 1])
         console.print(
             f"  [{GOLD}]Switched to[/] {llm.active_provider.model} ({llm.active_provider.name})"
         )
