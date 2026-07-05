@@ -1,5 +1,5 @@
 [project]
-name = "dotagent"
+name = "sage"
 version = "0.1.0"
 description = "Autonomous coding agent with a sandboxed workspace, multi-provider LLM fallback, and a FastAPI-backed CLI"
 readme = "README.md"
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dotagent = "app.cli.main:app"
+sage = "app.cli.main:app"
 
 [build-system]
 requires = ["hatchling"]

@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: dotagent:latest
-    container_name: dotagent-cli
+    image: sage:latest
+    container_name: sage-cli
 
     stdin_open: true
     tty: true
@@ -16,14 +16,14 @@ services:
     env_file:
       - .env
 
-    command: ["dotagent"]
+    command: ["sage"]
 
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    image: dotagent:latest
-    container_name: dotagent-api
+    image: sage:latest
+    container_name: sage-api
 
     ports:
       - "8000:8000"

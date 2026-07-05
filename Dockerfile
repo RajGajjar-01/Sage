@@ -31,11 +31,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-RUN groupadd --gid 1000 dotagent \
-    && useradd --uid 1000 --gid dotagent --create-home --shell /bin/bash dotagent
+RUN groupadd --gid 1000 sage \
+    && useradd --uid 1000 --gid sage --create-home --shell /bin/bash sage
 
 WORKDIR /app
-COPY --from=builder --chown=dotagent:dotagent /app /app
+COPY --from=builder --chown=sage:sage /app /app
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
@@ -43,8 +43,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     WORKSPACE=/workspace \
     DB_PATH=/data/agent.db
 
-RUN mkdir -p /workspace /data && chown -R dotagent:dotagent /workspace /data
+RUN mkdir -p /workspace /data && chown -R sage:sage /workspace /data
 
-USER dotagent
+USER sage
 
-CMD ["dotagent"]
+CMD ["sage"]

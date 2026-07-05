@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await app.state.db.close()
 
 
-app = FastAPI(title="DotAgent", lifespan=lifespan)
+app = FastAPI(title="Sage", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

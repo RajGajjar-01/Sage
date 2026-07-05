@@ -1,6 +1,6 @@
-# DotAgent
+# Sage
 
-DotAgent is an autonomous coding agent, rewritten in Python from the original .NET/Spectre.Console prototype. It's a CLI you install locally: it explores a codebase, writes a plan, waits for your approval, then executes it step by step inside a sandboxed workspace. A FastAPI service exposing the same session/provider data lives alongside it.
+Sage is an autonomous coding agent, rewritten in Python from the original .NET/Spectre.Console prototype. It's a CLI you install locally: it explores a codebase, writes a plan, waits for your approval, then executes it step by step inside a sandboxed workspace. A FastAPI service exposing the same session/provider data lives alongside it.
 
 ## Features
 
@@ -20,10 +20,10 @@ DotAgent is an autonomous coding agent, rewritten in Python from the original .N
 
 ```bash
 uv sync
-uv run dotagent
+uv run sage
 ```
 
-No `.env` required to get started: if no provider is configured (via `GROQ_API_KEY`/`ZHIPU_API_KEY`/`ZAI_API_KEY`, or a previously saved one), the CLI prompts you to connect one on first run and saves it to the local SQLite database. You can also add or update a provider anytime by typing `/connect` at the chat prompt. `TAVILY_API_KEY` is optional and only powers the prompt enhancer.
+No `.env` required to get started: Sage boots straight into the menu even with zero providers configured. Type `/connect` at the chat prompt anytime to add or update a provider (saved to the local SQLite database, no restart needed) — if you send a message before connecting one, Sage just tells you to run `/connect` first. `TAVILY_API_KEY` is optional and only powers the prompt enhancer.
 
 ## Running the API
 
@@ -36,7 +36,7 @@ Endpoints live under `/api/v1` (`/sessions`, `/providers`, `/providers/connect`)
 ## Docker
 
 ```bash
-docker compose up cli    # interactive CLI, same as `uv run dotagent`
+docker compose up cli    # interactive CLI, same as `uv run sage`
 docker compose up api    # FastAPI server on :8000
 ```
 

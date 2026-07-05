@@ -2,12 +2,12 @@ from rich.console import Console
 from rich.text import Text
 
 _LINES = (
-    "  ██████╗  ██████╗ ████████╗  █████╗  ██████╗ ███████╗███╗   ██╗████████╗",
-    "  ██╔══██╗██╔═══██╗╚══██╔══╝ ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝",
-    "  ██║  ██║██║   ██║   ██║    ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ",
-    "  ██║  ██║██║   ██║   ██║    ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ",
-    "  ██████╔╝╚██████╔╝   ██║    ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ",
-    "  ╚═════╝  ╚═════╝    ╚═╝    ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝  ",
+    "   ██████╗  █████╗  ██████╗ ███████╗",
+    "  ██╔════╝ ██╔══██╗██╔════╝ ██╔════╝",
+    "  ╚█████╗  ███████║██║  ███╗█████╗  ",
+    "   ╚═══██╗ ██╔══██║██║   ██║██╔══╝  ",
+    "  ██████╔╝ ██║  ██║╚██████╔╝███████╗",
+    "  ╚═════╝  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝",
 )
 _GRADIENT = (
     (255, 255, 255),
@@ -25,6 +25,6 @@ def print_banner(console: Console) -> None:
         console.print(Text(line, style=f"rgb({r},{g},{b})"))
     console.print()
     console.print(
-        "  [dim]DotAgent Core [/][bold #F0AA00]●[/][dim] Sandboxed Workspace · Multi-Provider · Resumable Sessions[/]"
+        "  [dim]Sage Core [/][bold #F0AA00]●[/][dim] Sandboxed Workspace · Multi-Provider · Resumable Sessions[/]"
     )
     console.print()
