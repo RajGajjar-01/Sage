@@ -83,3 +83,15 @@ async def test_enhance_skips_meta_commands(tmp_path, connection):
 
     assert result == "yes"
     assert was_enhanced is False
+
+
+def test_groq_client_uses_configured_endpoint(tmp_path, connection):
+    settings = Settings(
+        GROQ_API_KEY="key",
+        ZHIPU_API_KEY=None,
+        GROQ_ENDPOINT="https://proxy.internal/v1/",
+    )
+    sandbox = Sandbox(tmp_path / "workspace")
+    enhancer = PromptEnhancer(settings, sandbox, DocCache(connection))
+
+    assert str(enhancer._groq_client.base_url) == "https://proxy.internal/v1/"

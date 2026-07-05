@@ -7,7 +7,6 @@ from app.core.config import Settings
 from app.core.sandbox import Sandbox
 from app.services.doc_cache import DocCache
 
-_GROQ_ENDPOINT = "https://api.groq.com/openai/v1/"
 _TAVILY_ENDPOINT = "https://api.tavily.com/search"
 
 _ENHANCER_SYSTEM_PROMPT = (
@@ -89,7 +88,7 @@ class PromptEnhancer:
         self._groq_model = settings.GROQ_MODEL
         if settings.GROQ_API_KEY:
             self._groq_client = AsyncOpenAI(
-                api_key=settings.GROQ_API_KEY, base_url=_GROQ_ENDPOINT
+                api_key=settings.GROQ_API_KEY, base_url=settings.GROQ_ENDPOINT
             )
 
     async def enhance(self, user_input: str) -> tuple[str, bool]:
@@ -149,6 +148,8 @@ class PromptEnhancer:
             )
         except httpx.TimeoutException:
             return "(Web search timed out)"
+        except httpx.HTTPError:
+            return "(Web search failed)"
 
         if response.status_code != 200:
             return "(Web search failed)"
