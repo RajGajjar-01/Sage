@@ -1,0 +1,38 @@
+services:
+  cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dotagent:latest
+    container_name: dotagent-cli
+
+    stdin_open: true
+    tty: true
+
+    volumes:
+      - ./workspace:/workspace
+      - ./data:/data
+
+    env_file:
+      - .env
+
+    command: ["dotagent"]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dotagent:latest
+    container_name: dotagent-api
+
+    ports:
+      - "8000:8000"
+
+    volumes:
+      - ./workspace:/workspace
+      - ./data:/data
+
+    env_file:
+      - .env
+
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
