@@ -20,11 +20,10 @@ DotAgent is an autonomous coding agent, rewritten in Python from the original .N
 
 ```bash
 uv sync
-cp .env.example .env   # fill in provider keys
 uv run dotagent
 ```
 
-Requires at least one of `GROQ_API_KEY` or `ZHIPU_API_KEY` (aliased as `ZAI_API_KEY`) to be set. `TAVILY_API_KEY` is optional and only powers the prompt enhancer.
+No `.env` required to get started: if no provider is configured (via `GROQ_API_KEY`/`ZHIPU_API_KEY`/`ZAI_API_KEY`, or a previously saved one), the CLI prompts you to connect one on first run and saves it to the local SQLite database. You can also add or update a provider anytime by typing `/connect` at the chat prompt. `TAVILY_API_KEY` is optional and only powers the prompt enhancer.
 
 ## Running the API
 
@@ -32,7 +31,7 @@ Requires at least one of `GROQ_API_KEY` or `ZHIPU_API_KEY` (aliased as `ZAI_API_
 uv run uvicorn app.main:app --reload
 ```
 
-Endpoints live under `/api/v1` (`/sessions`, `/providers`), plus `/live` and `/health`.
+Endpoints live under `/api/v1` (`/sessions`, `/providers`, `/providers/connect`), plus `/live` and `/health`.
 
 ## Docker
 
@@ -46,11 +45,11 @@ Both share the same image; `./workspace` and `./data` are mounted so the sandbox
 ## Project layout
 
 - `app/core/` — settings (pydantic-settings, no python-dotenv), the workspace sandbox, database wiring, response envelope, exception handlers.
-- `app/models/` — persistence-layer dataclasses (`Session`, `Message`, `Execution`).
+- `app/models/` — persistence-layer dataclasses (`Session`, `Message`, `Execution`, `ProviderCredential`).
 - `app/repositories/` — SQLite data access, one repository per model.
 - `app/services/` — `LlmService` (multi-provider), `ShellExecutor`, `FileTools`, `ActionParser`, `AgentOrchestrator`, `PromptEnhancer`, `DocCache`.
 - `app/api/v1/` — FastAPI routers.
-- `app/cli/` — the CLI front end (banner, menu, Rich-based `AgentUI` implementation).
+- `app/cli/` — the CLI front end (banner, menu, `/connect`, Rich-based `AgentUI` implementation).
 
 ## Development
 
