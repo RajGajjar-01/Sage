@@ -61,3 +61,9 @@ def test_is_read_only_command_rejects_uv_and_npx():
 
 def test_is_read_only_command_rejects_mixed_chain():
     assert not is_read_only_command("ls && rm -rf /")
+
+
+def test_is_read_only_command_rejects_redirection_from_allowlisted_command():
+    assert not is_read_only_command("echo hi > out.txt")
+    assert not is_read_only_command("cat file.txt | tee copy.txt")
+    assert not is_read_only_command("echo `rm -rf /`")

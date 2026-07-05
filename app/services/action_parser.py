@@ -47,8 +47,14 @@ def get_action_type(llm_output: str) -> ActionType:
     return ActionType.NONE
 
 
+_WRITE_INDICATORS = re.compile(r">|\btee\b|`|\$\(")
+
+
 def is_read_only_command(command: str) -> bool:
     """Whether every chained sub-command is on the read-only allowlist."""
+    if _WRITE_INDICATORS.search(command):
+        return False
+
     parts = re.split(r"\s*(?:&&|;|\|\|)\s*", command)
     for part in parts:
         trimmed = part.strip()
