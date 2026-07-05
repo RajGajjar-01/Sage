@@ -6,6 +6,7 @@ from app.services.llm_service import (
     LlmService,
     NoProviderConfiguredError,
     is_rate_limit_error,
+    list_models,
     load_providers,
 )
 
@@ -181,3 +182,58 @@ async def test_add_provider_updates_inactive_provider_without_rebuilding_active_
     assert zhipu.api_key == "new-zhipu-key"
     assert service._client is active_client
     assert not active_client.is_closed()
+
+
+class _FakeModel:
+    def __init__(self, model_id: str) -> None:
+        self.id = model_id
+
+
+class _FakeModelsList:
+    def __init__(
+        self, models: list[str] | None = None, error: Exception | None = None
+    ) -> None:
+        self._models = models or []
+        self._error = error
+
+    async def list(self):
+        if self._error is not None:
+            raise self._error
+        return type("Page", (), {"data": [_FakeModel(m) for m in self._models]})()
+
+
+class _FakeAsyncOpenAI:
+    def __init__(
+        self, models: list[str] | None = None, error: Exception | None = None
+    ) -> None:
+        self.models = _FakeModelsList(models, error)
+        self.closed = False
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_list_models_returns_sorted_ids(monkeypatch):
+    fake_client = _FakeAsyncOpenAI(models=["llama-b", "llama-a"])
+    monkeypatch.setattr(
+        "app.services.llm_service.AsyncOpenAI", lambda **kwargs: fake_client
+    )
+
+    models = await list_models("key", "https://example.com/")
+
+    assert models == ["llama-a", "llama-b"]
+    assert fake_client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_list_models_returns_empty_when_unsupported(monkeypatch):
+    fake_client = _FakeAsyncOpenAI(error=RuntimeError("not implemented"))
+    monkeypatch.setattr(
+        "app.services.llm_service.AsyncOpenAI", lambda **kwargs: fake_client
+    )
+
+    models = await list_models("key", "https://example.com/")
+
+    assert models == []
+    assert fake_client.closed is True

@@ -90,6 +90,23 @@ def is_rate_limit_error(exc: Exception) -> bool:
     return any(marker in message for marker in _RATE_LIMIT_MARKERS)
 
 
+async def list_models(
+    api_key: str, endpoint: str, timeout_seconds: float = 10.0
+) -> list[str]:
+    """Best-effort fetch of available model IDs from an OpenAI-compatible /models endpoint.
+
+    Returns an empty list if the provider doesn't implement it or the request fails --
+    callers should fall back to letting the user type a model name by hand."""
+    client = AsyncOpenAI(api_key=api_key, base_url=endpoint, timeout=timeout_seconds)
+    try:
+        response = await client.models.list()
+        return sorted(model.id for model in response.data)
+    except Exception:
+        return []
+    finally:
+        await client.close()
+
+
 class LlmService:
     """OpenAI-compatible chat completions client with multi-provider fallback."""
 
