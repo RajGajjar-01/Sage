@@ -3,7 +3,6 @@ import asyncio
 import typer
 from rich.console import Console
 
-from app.cli.connect import connect_provider
 from app.cli.menu import run_menu
 from app.cli.render import RichConsoleUI
 from app.core.config import settings
@@ -21,7 +20,7 @@ from app.services.prompt_enhancer import PromptEnhancer
 from app.services.shell_executor import ShellExecutor
 
 app = typer.Typer(
-    name="dotagent",
+    name="sage",
     help="Autonomous coding agent with a sandboxed workspace.",
     add_completion=False,
 )
@@ -29,15 +28,15 @@ app = typer.Typer(
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context) -> None:
-    """Launch the interactive DotAgent session."""
+    """Launch the interactive Sage session."""
     if ctx.invoked_subcommand is None:
         asyncio.run(_run())
 
 
 @app.command()
 def version() -> None:
-    """Print the installed dotagent version."""
-    typer.echo("dotagent 0.1.0")
+    """Print the installed sage version."""
+    typer.echo("sage 0.1.0")
 
 
 async def _run() -> None:
@@ -49,19 +48,10 @@ async def _run() -> None:
         provider_repo = ProviderRepository(connection)
         stored_credentials = await provider_repo.list()
 
-        llm: LlmService | None = None
-        while llm is None:
-            try:
-                llm = LlmService(settings, stored_credentials)
-            except NoProviderConfiguredError:
-                console.print(
-                    "  [dim]No LLM provider configured yet — let's connect one.[/]"
-                )
-                credential = await connect_provider(console, provider_repo)
-                if credential is None:
-                    console.print("[red]A provider is required to use DotAgent.[/]")
-                    raise typer.Exit(code=1) from None
-                stored_credentials = [credential]
+        try:
+            llm: LlmService | None = LlmService(settings, stored_credentials)
+        except NoProviderConfiguredError:
+            llm = None
 
         orchestrator = AgentOrchestrator(
             sandbox=sandbox,

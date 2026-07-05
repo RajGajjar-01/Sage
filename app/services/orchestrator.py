@@ -1,12 +1,12 @@
 import re
 from dataclasses import dataclass
 from enum import Enum, auto
-from importlib import resources
 from typing import Protocol
 
 from app.core.config import Settings
 from app.core.sandbox import Sandbox, SandboxViolationError
 from app.models.agent import Execution, Message, Session
+from app.prompts.system_prompt import SYSTEM_PROMPT
 from app.repositories.execution_repository import ExecutionRepository
 from app.repositories.message_repository import MessageRepository
 from app.repositories.session_repository import SessionRepository
@@ -51,7 +51,7 @@ class AgentOrchestrator:
     """Drives the think -> act -> observe loop: LLM call, then bash/file-tool execution."""
 
     sandbox: Sandbox
-    llm: LlmService
+    llm: LlmService | None
     shell: ShellExecutor
     file_tools: FileTools
     prompt_enhancer: PromptEnhancer
@@ -62,9 +62,7 @@ class AgentOrchestrator:
     settings: Settings
 
     def __post_init__(self) -> None:
-        self._system_prompt = (
-            resources.files("app.prompts").joinpath("system_prompt.txt").read_text()
-        )
+        self._system_prompt = SYSTEM_PROMPT
         self._session: Session | None = None
         self._history: list[Message] = []
 
@@ -110,6 +108,11 @@ class AgentOrchestrator:
 
     async def _agent_loop(self) -> SessionOutcome:
         assert self._session is not None
+
+        if self.llm is None:
+            await self.ui.notify("No model connected. Run /connect to add a provider.")
+            return SessionOutcome.CONTINUE
+
         recent_commands: list[str] = []
 
         for _step in range(self.settings.MAX_AGENT_STEPS):

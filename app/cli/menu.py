@@ -7,6 +7,7 @@ from rich.table import Table
 from app.cli.banner import print_banner
 from app.cli.connect import connect_provider
 from app.repositories.provider_repository import ProviderRepository
+from app.services.llm_service import LlmService
 from app.services.orchestrator import AgentOrchestrator, SessionOutcome
 
 GOLD = "#F0AA00"
@@ -18,8 +19,13 @@ async def run_menu(
     print_banner(console)
 
     while True:
+        model_label = (
+            orchestrator.llm.active_provider.model
+            if orchestrator.llm
+            else "no model connected"
+        )
         console.print(
-            f"  [bold {GOLD}]What do you want to do?[/]  [dim]({orchestrator.llm.active_provider.model})[/]"
+            f"  [bold {GOLD}]What do you want to do?[/]  [dim]({model_label})[/]"
         )
         console.print("  1) New chat")
         console.print("  2) Load session")
@@ -109,7 +115,10 @@ async def _chat_loop(
         if user_input.lower() == "/connect":
             credential = await connect_provider(console, providers)
             if credential is not None:
-                await orchestrator.llm.add_provider(credential)
+                if orchestrator.llm is None:
+                    orchestrator.llm = LlmService(orchestrator.settings, [credential])
+                else:
+                    await orchestrator.llm.add_provider(credential)
             console.print()
             continue
 
@@ -121,6 +130,11 @@ async def _chat_loop(
 
 async def _switch_model(orchestrator: AgentOrchestrator, console: Console) -> None:
     llm = orchestrator.llm
+    if llm is None:
+        console.print(
+            "  [dim]No model connected yet. Start a chat and type /connect.[/]"
+        )
+        return
     if len(llm.providers) <= 1:
         console.print(
             "  [dim]Only one provider configured. Add more in your .env file.[/]"

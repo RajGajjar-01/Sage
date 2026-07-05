@@ -289,3 +289,15 @@ async def test_enhancer_failure_falls_back_to_original_input(tmp_path, connectio
 
     assert outcome is SessionOutcome.CONTINUE
     assert llm.calls[0][-1].content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_send_message_without_llm_asks_to_connect(tmp_path, connection):
+    ui = FakeUI()
+    orchestrator = _orchestrator(tmp_path, connection, None, ui)
+    await orchestrator.start_session("test session")
+
+    outcome = await orchestrator.send_message("hello")
+
+    assert outcome is SessionOutcome.CONTINUE
+    assert any("/connect" in n for n in ui.notifications)
