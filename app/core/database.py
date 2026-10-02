@@ -1,5 +1,4 @@
 import os
-from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import aiosqlite
@@ -75,5 +74,6 @@ async def create_connection() -> aiosqlite.Connection:
     return connection
 
 
-async def get_db(request: Request) -> AsyncGenerator[aiosqlite.Connection]:
-    yield request.app.state.db
+def get_db(request: Request) -> aiosqlite.Connection:
+    connection: aiosqlite.Connection = request.app.state.db
+    return connection

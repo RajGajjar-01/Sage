@@ -27,8 +27,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         app.state.llm = LlmService(settings, stored_credentials)
     except NoProviderConfiguredError:
         app.state.llm = None
-    yield
-    await app.state.db.close()
+    try:
+        yield
+    finally:
+        await app.state.db.close()
 
 
 app = FastAPI(title="Sage", lifespan=lifespan)

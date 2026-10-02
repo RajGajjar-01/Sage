@@ -1,6 +1,6 @@
-from datetime import UTC, datetime
-
 import aiosqlite
+
+from app.models.agent import now
 
 _DEFAULT_TTL_HOURS = 24
 
@@ -12,7 +12,6 @@ class DocCache:
         self._connection = connection
 
     async def get(self, provider: str, query_key: str) -> str | None:
-        now = int(datetime.now(UTC).timestamp())
         key = _normalize(query_key)
         cursor = await self._connection.execute(
             "SELECT response, expires_at FROM doc_cache WHERE provider = ? AND query_key = ?",
@@ -23,7 +22,7 @@ class DocCache:
             return None
 
         response, expires_at = row["response"], row["expires_at"]
-        if expires_at < now:
+        if expires_at < now():
             await self._connection.execute(
                 "DELETE FROM doc_cache WHERE provider = ? AND query_key = ?",
                 (provider, key),
@@ -39,7 +38,7 @@ class DocCache:
         response: str,
         ttl_hours: int = _DEFAULT_TTL_HOURS,
     ) -> None:
-        now = int(datetime.now(UTC).timestamp())
+        stamp = now()
         key = _normalize(query_key)
         await self._connection.execute(
             """
@@ -50,7 +49,7 @@ class DocCache:
                 created_at = excluded.created_at,
                 expires_at = excluded.expires_at
             """,
-            (provider, key, response, now, now + ttl_hours * 3600),
+            (provider, key, response, stamp, stamp + ttl_hours * 3600),
         )
         await self._connection.commit()
 

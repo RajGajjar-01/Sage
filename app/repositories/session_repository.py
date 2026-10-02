@@ -1,6 +1,4 @@
-from datetime import UTC, datetime
-
-from app.models.agent import Session
+from app.models.agent import Session, now
 from app.repositories.base import BaseRepository
 
 
@@ -35,16 +33,14 @@ class SessionRepository(BaseRepository):
         return Session.from_row(dict(row)) if row else None
 
     async def touch(self, session_id: str) -> None:
-        now = int(datetime.now(UTC).timestamp())
         await self._connection.execute(
-            "UPDATE sessions SET updated_at = ? WHERE id = ?", (now, session_id)
+            "UPDATE sessions SET updated_at = ? WHERE id = ?", (now(), session_id)
         )
         await self._connection.commit()
 
     async def update_status(self, session_id: str, status: str) -> None:
-        now = int(datetime.now(UTC).timestamp())
         await self._connection.execute(
             "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
-            (status, now, session_id),
+            (status, now(), session_id),
         )
         await self._connection.commit()

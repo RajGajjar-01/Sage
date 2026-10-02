@@ -4,7 +4,7 @@ import aiosqlite
 import pytest
 from rich.console import Console
 
-from app.cli.connect import connect_provider
+from app.cli.connect import _shortlist, connect_provider, pick_number
 from app.core.database import _SCHEMA
 from app.repositories.provider_repository import ProviderRepository
 
@@ -116,12 +116,12 @@ async def test_connect_lets_user_pick_from_live_model_list(providers):
 
 
 @pytest.mark.asyncio
-async def test_connect_rejects_invalid_model_pick(providers):
+async def test_connect_cancelled_by_zero_model_pick(providers):
     answers = iter(["GROQ", "my-api-key", ""])
     with (
         patch("app.cli.connect.list_models", AsyncMock(return_value=["model-a"])),
         patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
-        patch("rich.prompt.IntPrompt.ask", return_value=99),
+        patch("rich.prompt.IntPrompt.ask", return_value=0),
     ):
         credential = await connect_provider(_console(), providers)
 
@@ -153,3 +153,47 @@ async def test_connect_cloudflare_requires_account_id(providers):
         credential = await connect_provider(_console(), providers)
 
     assert credential is None
+
+
+def test_pick_number_only_accepts_zero_through_count():
+    with patch("rich.prompt.IntPrompt.ask", return_value=2) as ask:
+        assert pick_number(_console(), "pick", 3) == 2
+
+    assert ask.call_args.kwargs["choices"] == ["0", "1", "2", "3"]
+
+
+@pytest.mark.asyncio
+async def test_connect_openrouter_uses_default_endpoint(providers):
+    answers = iter(["OPENROUTER", "my-api-key", "", "openai/gpt-4o-mini"])
+    with (
+        _no_models(),
+        patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
+    ):
+        credential = await connect_provider(_console(), providers)
+
+    assert credential is not None
+    assert credential.endpoint == "https://openrouter.ai/api/v1"
+    assert credential.model == "openai/gpt-4o-mini"
+
+
+def test_shortlist_filters_a_large_catalogue():
+    models = [f"vendor/model-{i}" for i in range(400)] + ["openai/gpt-4o-mini"]
+
+    with patch("rich.prompt.Prompt.ask", return_value="gpt-4o"):
+        shortlisted = _shortlist(_console(), models)
+
+    assert shortlisted == ["openai/gpt-4o-mini"]
+
+
+def test_shortlist_caps_when_filter_is_skipped():
+    models = [f"vendor/model-{i}" for i in range(400)]
+
+    with patch("rich.prompt.Prompt.ask", return_value=""):
+        shortlisted = _shortlist(_console(), models)
+
+    assert len(shortlisted) == 30
+
+
+def test_shortlist_leaves_a_small_catalogue_alone():
+    models = ["a", "b", "c"]
+    assert _shortlist(_console(), models) == models

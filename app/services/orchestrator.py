@@ -12,6 +12,7 @@ from app.repositories.message_repository import MessageRepository
 from app.repositories.session_repository import SessionRepository
 from app.services.action_parser import (
     COMMAND_BLOCK,
+    FILE_TOOL_BLOCK,
     ActionType,
     extract,
     get_action_type,
@@ -62,7 +63,6 @@ class AgentOrchestrator:
     settings: Settings
 
     def __post_init__(self) -> None:
-        self._system_prompt = SYSTEM_PROMPT
         self._session: Session | None = None
         self._history: list[Message] = []
 
@@ -75,9 +75,17 @@ class AgentOrchestrator:
         session = await self.sessions.get(session_id)
         if session is None:
             raise ValueError(f"Session {session_id} not found.")
+        if session.status != "active":
+            await self.sessions.update_status(session_id, "active")
+            session.status = "active"
         self._session = session
         self._history = await self.messages.list_by_session(session_id)
         return session
+
+    @property
+    def history(self) -> list[Message]:
+        """Messages of the current session, oldest first."""
+        return self._history
 
     async def send_message(self, user_input: str) -> SessionOutcome:
         if self._session is None:
@@ -124,7 +132,7 @@ class AgentOrchestrator:
                 await self.ui.notify(f"LLM error: {exc}")
                 return SessionOutcome.CONTINUE
 
-            text_part = _extract_text_part(response)
+            text_part = extract_text_part(response)
             if text_part:
                 await self.ui.on_assistant_message(text_part, usage, metrics)
 
@@ -175,7 +183,7 @@ class AgentOrchestrator:
 
     async def _run_file_tool(self, response: str) -> None:
         assert self._session is not None
-        result, _ = self.file_tools.parse_and_execute(response)
+        result = self.file_tools.parse_and_execute(response)
         await self.ui.on_tool_panel("file tool", result.tool_name)
         await self.ui.on_result(result.success, result.output.split("\n")[0])
         await self._append_message(
@@ -273,19 +281,13 @@ class AgentOrchestrator:
             else ""
         )
         env_context = f"\n\n=== ENVIRONMENT ===\nWorking directory: {self.shell.working_directory}\n"
-        return self._system_prompt + task_context + env_context
+        return SYSTEM_PROMPT + task_context + env_context
 
 
-def _extract_text_part(response: str) -> str:
-    text = COMMAND_BLOCK.sub("", response)
-    text = re.sub(
-        r"<(write_file|read_file|list_dir|create_dir|delete_file)\b[^>]*>[\s\S]*?</\1>",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+def extract_text_part(response: str) -> str:
+    """Strip bash blocks and file-tool tags, leaving the prose the model wrote."""
+    text = FILE_TOOL_BLOCK.sub("", COMMAND_BLOCK.sub("", response))
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _truncate_output(output: str, exit_code: int) -> str:

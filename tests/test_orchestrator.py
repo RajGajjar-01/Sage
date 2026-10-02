@@ -301,3 +301,18 @@ async def test_send_message_without_llm_asks_to_connect(tmp_path, connection):
 
     assert outcome is SessionOutcome.CONTINUE
     assert any("/connect" in n for n in ui.notifications)
+
+
+@pytest.mark.asyncio
+async def test_resume_reactivates_a_completed_session(tmp_path, connection):
+    orchestrator = _orchestrator(tmp_path, connection, FakeLlm(["Done."]), FakeUI())
+    session = await orchestrator.start_session("t")
+    await orchestrator.send_message("hi")
+    assert await orchestrator.send_message("exit") is SessionOutcome.ENDED
+    assert (await orchestrator.sessions.get(session.id)).status == "completed"
+
+    resumed = await orchestrator.resume_session(session.id)
+
+    assert resumed.status == "active"
+    assert (await orchestrator.sessions.get(session.id)).status == "active"
+    assert [m.role for m in orchestrator.history] == ["user", "assistant"]

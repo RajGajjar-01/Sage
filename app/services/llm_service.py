@@ -44,7 +44,6 @@ class LlmProvider:
 class TokenUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    cached_tokens: int | None = None
 
     @property
     def total(self) -> int:

@@ -1,10 +1,7 @@
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
-
-def _now() -> int:
-    return int(datetime.now(UTC).timestamp())
+from app.models.agent import now
 
 
 @dataclass
@@ -13,8 +10,8 @@ class ProviderCredential:
     api_key: str
     model: str
     endpoint: str
-    created_at: int = field(default_factory=_now)
-    updated_at: int = field(default_factory=_now)
+    created_at: int = field(default_factory=now)
+    updated_at: int = field(default_factory=now)
 
     @staticmethod
     def from_row(row: dict[str, Any]) -> "ProviderCredential":

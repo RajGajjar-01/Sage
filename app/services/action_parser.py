@@ -2,7 +2,7 @@ import re
 from enum import Enum, auto
 
 COMMAND_BLOCK = re.compile(r"```(?:bash-action|bash|sh)\s*\n?(.*?)\n?```", re.DOTALL)
-_FILE_TOOL_PATTERN = re.compile(
+FILE_TOOL_BLOCK = re.compile(
     r"<(read_file|write_file|list_dir|create_dir|delete_file)\b[^>]*>.*?</\1>",
     re.DOTALL | re.IGNORECASE,
 )
@@ -36,7 +36,7 @@ def is_exit(command: str) -> bool:
 
 
 def has_file_tool(llm_output: str) -> bool:
-    return bool(_FILE_TOOL_PATTERN.search(llm_output))
+    return bool(FILE_TOOL_BLOCK.search(llm_output))
 
 
 def get_action_type(llm_output: str) -> ActionType:

@@ -1,4 +1,5 @@
 import asyncio
+from importlib.metadata import version as package_version
 
 import typer
 from rich.console import Console
@@ -36,7 +37,7 @@ def main(ctx: typer.Context) -> None:
 @app.command()
 def version() -> None:
     """Print the installed sage version."""
-    typer.echo("sage 0.1.0")
+    typer.echo(f"sage {package_version('sage')}")
 
 
 async def _run() -> None:

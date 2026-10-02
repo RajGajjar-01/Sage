@@ -6,7 +6,8 @@ from typing import Any, Literal
 MessageRole = Literal["user", "assistant", "tool_result"]
 
 
-def _now() -> int:
+def now() -> int:
+    """Current UTC time as whole seconds -- the timestamp format every table stores."""
     return int(datetime.now(UTC).timestamp())
 
 
@@ -15,8 +16,8 @@ class Session:
     title: str
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     status: str = "active"
-    created_at: int = field(default_factory=_now)
-    updated_at: int = field(default_factory=_now)
+    created_at: int = field(default_factory=now)
+    updated_at: int = field(default_factory=now)
 
     @staticmethod
     def from_row(row: dict[str, Any]) -> "Session":
@@ -35,7 +36,7 @@ class Message:
     role: MessageRole
     content: str
     id: int | None = None
-    created_at: int = field(default_factory=_now)
+    created_at: int = field(default_factory=now)
 
     @staticmethod
     def from_row(row: dict[str, Any]) -> "Message":
@@ -56,7 +57,7 @@ class Execution:
     exit_code: int = 0
     duration_ms: int = 0
     id: int | None = None
-    created_at: int = field(default_factory=_now)
+    created_at: int = field(default_factory=now)
 
     @staticmethod
     def from_row(row: dict[str, Any]) -> "Execution":

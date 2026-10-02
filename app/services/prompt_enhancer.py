@@ -82,7 +82,6 @@ class PromptEnhancer:
         self._sandbox = sandbox
         self._doc_cache = doc_cache
         self._tavily_api_key = settings.TAVILY_API_KEY
-        self._http_client = httpx.AsyncClient(timeout=10.0)
 
         self._groq_client: AsyncOpenAI | None = None
         self._groq_model = settings.GROQ_MODEL
@@ -135,17 +134,17 @@ class PromptEnhancer:
             return cached
 
         try:
-            response = await self._http_client.post(
-                _TAVILY_ENDPOINT,
-                json={
-                    "api_key": self._tavily_api_key,
-                    "query": f"best practices current libraries for: {query}",
-                    "search_depth": "basic",
-                    "max_results": 3,
-                    "include_answer": True,
-                },
-                timeout=8.0,
-            )
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                response = await client.post(
+                    _TAVILY_ENDPOINT,
+                    json={
+                        "api_key": self._tavily_api_key,
+                        "query": f"best practices current libraries for: {query}",
+                        "search_depth": "basic",
+                        "max_results": 3,
+                        "include_answer": True,
+                    },
+                )
         except httpx.TimeoutException:
             return "(Web search timed out)"
         except httpx.HTTPError:

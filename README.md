@@ -6,7 +6,7 @@ Sage is an autonomous coding agent, rewritten in Python from the original .NET/S
 
 - Plan Mode and Execute Mode workflow, with mandatory user approval before execution.
 - Workspace sandbox: every file and shell operation is confined to a single configured directory, enforced at the point of execution (not just as a pre-check).
-- Multi-provider LLM support (Groq, ZhipuAI) with automatic round-robin fallback on rate limits or errors.
+- Multi-provider LLM support with automatic round-robin fallback on rate limits or errors. Any OpenAI-compatible endpoint works; `/connect` knows the defaults for Groq, ZhipuAI, Cloudflare Workers AI, OpenRouter, Gemini and OpenAI, and lets you filter long model catalogues (OpenRouter lists 400+).
 - Resumable sessions backed by SQLite.
 - A Tavily-backed prompt enhancer that expands vague first messages into a detailed spec.
 - A versioned FastAPI surface (`/api/v1`) for session/provider access alongside the CLI.

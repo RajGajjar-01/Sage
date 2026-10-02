@@ -90,16 +90,15 @@ def test_parse_and_execute_read_file_tag(tmp_path):
     tools = _tools(tmp_path)
     tools.write_file("a.txt", "hello")
 
-    result, remaining = tools.parse_and_execute("<read_file>a.txt</read_file>")
+    result = tools.parse_and_execute("<read_file>a.txt</read_file>")
 
     assert result.success
-    assert remaining == ""
 
 
 def test_parse_and_execute_write_file_double_quotes(tmp_path):
     tools = _tools(tmp_path)
 
-    result, _ = tools.parse_and_execute('<write_file path="a.txt">hello</write_file>')
+    result = tools.parse_and_execute('<write_file path="a.txt">hello</write_file>')
 
     assert result.success
     assert tools.read_file("a.txt").output.endswith("hello")
@@ -108,13 +107,22 @@ def test_parse_and_execute_write_file_double_quotes(tmp_path):
 def test_parse_and_execute_write_file_single_quotes(tmp_path):
     tools = _tools(tmp_path)
 
-    result, _ = tools.parse_and_execute("<write_file path='a.txt'>hello</write_file>")
+    result = tools.parse_and_execute("<write_file path='a.txt'>hello</write_file>")
 
     assert result.success
 
 
 def test_parse_and_execute_unknown_when_no_tag(tmp_path):
     tools = _tools(tmp_path)
-    result, remaining = tools.parse_and_execute("just some text")
+    result = tools.parse_and_execute("just some text")
     assert not result.success
-    assert remaining == "just some text"
+
+
+def test_read_file_reports_failure_instead_of_raising_on_binary(tmp_path):
+    tools = _tools(tmp_path)
+    (tmp_path / "workspace" / "blob.bin").write_bytes(b"\xff\xfe\x00binary")
+
+    result = tools.read_file("blob.bin")
+
+    assert not result.success
+    assert "Error reading file" in result.output

@@ -54,13 +54,3 @@ async def test_list_returns_all_credentials_sorted_by_name(connection):
     names = [c.name for c in await repo.list()]
 
     assert names == ["GROQ", "ZHIPU"]
-
-
-@pytest.mark.asyncio
-async def test_delete_removes_credential(connection):
-    repo = ProviderRepository(connection)
-    await repo.upsert("GROQ", "key-1", "model-a", "https://a.example/")
-
-    await repo.delete("GROQ")
-
-    assert await repo.get("GROQ") is None

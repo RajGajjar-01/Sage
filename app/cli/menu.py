@@ -1,16 +1,24 @@
 from datetime import datetime
 
 from rich.console import Console
-from rich.prompt import IntPrompt, Prompt
+from rich.markdown import Markdown
+from rich.prompt import Prompt
+from rich.rule import Rule
 from rich.table import Table
 
 from app.cli.banner import print_banner
-from app.cli.connect import connect_provider
+from app.cli.connect import connect_provider, pick_number
+from app.models.agent import Message
 from app.repositories.provider_repository import ProviderRepository
 from app.services.llm_service import LlmService
-from app.services.orchestrator import AgentOrchestrator, SessionOutcome
+from app.services.orchestrator import (
+    AgentOrchestrator,
+    SessionOutcome,
+    extract_text_part,
+)
 
 GOLD = "#F0AA00"
+_TRANSCRIPT_MESSAGES = 10
 
 
 async def run_menu(
@@ -94,13 +102,14 @@ async def _load_session(
         )
     console.print(table)
 
-    pick = IntPrompt.ask("  Pick a session # (0 to cancel)", console=console)
-    if pick == 0 or pick > len(sessions):
+    pick = pick_number(console, "  Pick a session # (0 to cancel)", len(sessions))
+    if pick == 0:
         return
 
     session = await orchestrator.resume_session(sessions[pick - 1].id)
     console.print(f"  [dim]Resuming:[/] [{GOLD}]{session.id[:8]}[/] · {session.title}")
     console.print()
+    _print_transcript(console, orchestrator.history)
     await _chat_loop(orchestrator, console, providers)
 
 
@@ -122,7 +131,11 @@ async def _chat_loop(
             console.print()
             continue
 
-        outcome = await orchestrator.send_message(user_input)
+        try:
+            outcome = await orchestrator.send_message(user_input)
+        except Exception as exc:  # keep the session alive on any agent-loop failure
+            console.print(f"  [red]Error:[/] {exc}")
+            continue
         if outcome is SessionOutcome.ENDED:
             console.print("  [dim]Session saved. Returning to menu.[/]")
             return
@@ -145,9 +158,29 @@ async def _switch_model(orchestrator: AgentOrchestrator, console: Console) -> No
         marker = " ●" if provider.name == llm.active_provider.name else ""
         console.print(f"  {i}) {provider.name} · {provider.model}{marker}")
 
-    pick = IntPrompt.ask("  Pick a model #", console=console)
-    if 1 <= pick <= len(llm.providers):
-        await llm.switch_provider(llm.providers[pick - 1])
-        console.print(
-            f"  [{GOLD}]Switched to[/] {llm.active_provider.model} ({llm.active_provider.name})"
-        )
+    pick = pick_number(console, "  Pick a model # (0 to cancel)", len(llm.providers))
+    if pick == 0:
+        return
+    await llm.switch_provider(llm.providers[pick - 1])
+    console.print(
+        f"  [{GOLD}]Switched to[/] {llm.active_provider.model} ({llm.active_provider.name})"
+    )
+
+
+def _print_transcript(console: Console, history: list[Message]) -> None:
+    """Replay the tail of a resumed conversation so the user can see where they left off."""
+    conversation = [m for m in history if m.role in ("user", "assistant")]
+    shown = conversation[-_TRANSCRIPT_MESSAGES:]
+    if not shown:
+        return
+
+    omitted = len(conversation) - len(shown)
+    if omitted > 0:
+        console.print(f"  [dim]... {omitted} earlier messages not shown ...[/]")
+    for message in shown:
+        if message.role == "user":
+            console.print(f"  [bold {GOLD}]You ›[/] {message.content}")
+        elif text := extract_text_part(message.content):
+            console.print(Markdown(text))
+    console.print(Rule(style="dim"))
+    console.print()
