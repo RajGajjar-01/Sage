@@ -1,7 +1,6 @@
 import json
 
 import httpx
-from openai import AsyncOpenAI
 
 from app.core.config import Settings
 from app.core.sandbox import Sandbox
@@ -83,11 +82,12 @@ class PromptEnhancer:
         self._doc_cache = doc_cache
         self._tavily_api_key = settings.TAVILY_API_KEY
 
-        self._groq_client: AsyncOpenAI | None = None
+        self._groq_client: httpx.AsyncClient | None = None
         self._groq_model = settings.GROQ_MODEL
         if settings.GROQ_API_KEY:
-            self._groq_client = AsyncOpenAI(
-                api_key=settings.GROQ_API_KEY, base_url=settings.GROQ_ENDPOINT
+            self._groq_client = httpx.AsyncClient(
+                base_url=settings.GROQ_ENDPOINT.rstrip("/") + "/",
+                headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
             )
 
     async def enhance(self, user_input: str) -> tuple[str, bool]:
@@ -108,18 +108,22 @@ class PromptEnhancer:
         )
 
         try:
-            response = await self._groq_client.chat.completions.create(
-                model=self._groq_model,
-                messages=[
-                    {"role": "system", "content": _ENHANCER_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
+            response = await self._groq_client.post(
+                "chat/completions",
+                json={
+                    "model": self._groq_model,
+                    "messages": [
+                        {"role": "system", "content": _ENHANCER_SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                },
                 timeout=15.0,
             )
+            response.raise_for_status()
+            content = (response.json()["choices"][0]["message"]["content"] or "").strip()
         except Exception:
             return user_input, False
 
-        content = (response.choices[0].message.content or "").strip()
         if not content or content.upper().startswith("PASS") or content == user_input:
             return user_input, False
         return content, True

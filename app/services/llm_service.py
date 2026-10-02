@@ -1,10 +1,10 @@
+import json
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
-from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionMessageParam
+import httpx
 
 from app.core.config import Settings
 from app.models.agent import Message
@@ -26,6 +26,10 @@ _RATE_LIMIT_MARKERS = (
 
 class NoProviderConfiguredError(Exception):
     """Raised when no LLM provider has an API key set."""
+
+
+class LlmHttpError(Exception):
+    """Raised when a provider answers a chat completion with an error."""
 
 
 class ProvidersExhaustedError(Exception):
@@ -89,6 +93,15 @@ def is_rate_limit_error(exc: Exception) -> bool:
     return any(marker in message for marker in _RATE_LIMIT_MARKERS)
 
 
+def _build_client(api_key: str, endpoint: str, timeout: float) -> httpx.AsyncClient:
+    """Client rooted at an OpenAI-compatible base URL (trailing slash keeps relative paths intact)."""
+    return httpx.AsyncClient(
+        base_url=endpoint.rstrip("/") + "/",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+
+
 async def list_models(
     api_key: str, endpoint: str, timeout_seconds: float = 10.0
 ) -> list[str]:
@@ -96,14 +109,13 @@ async def list_models(
 
     Returns an empty list if the provider doesn't implement it or the request fails --
     callers should fall back to letting the user type a model name by hand."""
-    client = AsyncOpenAI(api_key=api_key, base_url=endpoint, timeout=timeout_seconds)
     try:
-        response = await client.models.list()
-        return sorted(model.id for model in response.data)
+        async with _build_client(api_key, endpoint, timeout_seconds) as client:
+            response = await client.get("models")
+            response.raise_for_status()
+            return sorted(model["id"] for model in response.json()["data"])
     except Exception:
         return []
-    finally:
-        await client.close()
 
 
 class LlmService:
@@ -135,7 +147,7 @@ class LlmService:
         old_client = self._client
         self._provider_index = self._providers.index(provider)
         self._client = self._build_client(provider)
-        await old_client.close()
+        await old_client.aclose()
 
     async def switch_to_next_provider(self) -> bool:
         """Round-robin to the next provider. Returns False once it has cycled back."""
@@ -145,7 +157,7 @@ class LlmService:
         old_client = self._client
         self._provider_index = next_index
         self._client = self._build_client(self.active_provider)
-        await old_client.close()
+        await old_client.aclose()
         return True
 
     async def add_provider(self, credential: ProviderCredential) -> None:
@@ -163,7 +175,7 @@ class LlmService:
             if existing_index == self._provider_index:
                 old_client = self._client
                 self._client = self._build_client(new_provider)
-                await old_client.close()
+                await old_client.aclose()
             return
 
         self._providers.append(new_provider)
@@ -171,11 +183,9 @@ class LlmService:
             self._provider_index = 0
             self._client = self._build_client(new_provider)
 
-    def _build_client(self, provider: LlmProvider) -> AsyncOpenAI:
-        return AsyncOpenAI(
-            api_key=provider.api_key,
-            base_url=provider.endpoint,
-            timeout=self._settings.LLM_TIMEOUT_SECONDS,
+    def _build_client(self, provider: LlmProvider) -> httpx.AsyncClient:
+        return _build_client(
+            provider.api_key, provider.endpoint, self._settings.LLM_TIMEOUT_SECONDS
         )
 
     @staticmethod
@@ -208,15 +218,31 @@ class LlmService:
             started = time.perf_counter()
 
             try:
-                stream = await self._client.chat.completions.create(
-                    model=provider.model,
-                    messages=cast(list[ChatCompletionMessageParam], chat_messages),
-                    stream=True,
-                    stream_options={"include_usage": True},
-                )
-                async for chunk in stream:
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta.content
+                payload = {
+                    "model": provider.model,
+                    "messages": chat_messages,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+                async with self._client.stream(
+                    "POST", "chat/completions", json=payload
+                ) as response:
+                    if response.is_error:
+                        body = (await response.aread()).decode(errors="replace")
+                        raise LlmHttpError(
+                            f"{response.status_code} {response.reason_phrase}: {body}"
+                        )
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        chunk = json.loads(data)
+                        if "error" in chunk:
+                            raise LlmHttpError(str(chunk["error"]))
+                        choices = chunk.get("choices")
+                        delta = choices[0].get("delta", {}).get("content") if choices else None
                         if delta:
                             if not first_token_seen:
                                 first_token_ms = (time.perf_counter() - started) * 1000
@@ -224,11 +250,13 @@ class LlmService:
                             full_response.append(delta)
                             if on_token is not None:
                                 await on_token(delta)
-                    if chunk.usage is not None:
-                        usage = TokenUsage(
-                            prompt_tokens=chunk.usage.prompt_tokens,
-                            completion_tokens=chunk.usage.completion_tokens,
-                        )
+                        if chunk.get("usage"):
+                            usage = TokenUsage(
+                                prompt_tokens=chunk["usage"].get("prompt_tokens", 0),
+                                completion_tokens=chunk["usage"].get(
+                                    "completion_tokens", 0
+                                ),
+                            )
 
                 total_ms = (time.perf_counter() - started) * 1000
                 metrics = LlmMetrics(
