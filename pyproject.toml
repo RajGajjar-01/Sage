@@ -9,7 +9,6 @@ dependencies = [
     "fastapi>=0.139.0",
     "fastapi-cli>=0.0.28",
     "httpx>=0.28.1",
-    "openai>=2.44.0",
     "pydantic-settings>=2.14.2",
     "rich>=15.0.0",
     "typer>=0.26.8",

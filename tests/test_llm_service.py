@@ -1,14 +1,24 @@
+import json
+
+import httpx
 import pytest
 
 from app.core.config import Settings
+from app.models.agent import Message
 from app.models.provider import ProviderCredential
 from app.services.llm_service import (
+    LlmProvider,
     LlmService,
     NoProviderConfiguredError,
+    ProvidersExhaustedError,
     is_rate_limit_error,
     list_models,
     load_providers,
 )
+
+
+def _credential(name: str, endpoint: str) -> ProviderCredential:
+    return ProviderCredential(name=name, api_key="k", model="m", endpoint=endpoint)
 
 
 def _settings(**overrides) -> Settings:
@@ -60,7 +70,7 @@ async def test_switch_to_next_provider_closes_old_client():
 
     await service.switch_to_next_provider()
 
-    assert old_client.is_closed()
+    assert old_client.is_closed
 
 
 @pytest.mark.asyncio
@@ -71,7 +81,7 @@ async def test_switch_provider_closes_old_client():
 
     await service.switch_provider(zhipu)
 
-    assert old_client.is_closed()
+    assert old_client.is_closed
     assert service.active_provider.name == "ZHIPU"
 
 
@@ -164,7 +174,7 @@ async def test_add_provider_updates_active_provider_and_closes_old_client():
     )
 
     assert service.active_provider.api_key == "new-key"
-    assert old_client.is_closed()
+    assert old_client.is_closed
 
 
 @pytest.mark.asyncio
@@ -181,59 +191,94 @@ async def test_add_provider_updates_inactive_provider_without_rebuilding_active_
     zhipu = next(p for p in service.providers if p.name == "ZHIPU")
     assert zhipu.api_key == "new-zhipu-key"
     assert service._client is active_client
-    assert not active_client.is_closed()
+    assert not active_client.is_closed
 
 
-class _FakeModel:
-    def __init__(self, model_id: str) -> None:
-        self.id = model_id
-
-
-class _FakeModelsList:
-    def __init__(
-        self, models: list[str] | None = None, error: Exception | None = None
-    ) -> None:
-        self._models = models or []
-        self._error = error
-
-    async def list(self):
-        if self._error is not None:
-            raise self._error
-        return type("Page", (), {"data": [_FakeModel(m) for m in self._models]})()
-
-
-class _FakeAsyncOpenAI:
-    def __init__(
-        self, models: list[str] | None = None, error: Exception | None = None
-    ) -> None:
-        self.models = _FakeModelsList(models, error)
-        self.closed = False
-
-    async def close(self) -> None:
-        self.closed = True
+def _mock_http(monkeypatch, handler):
+    """Route every httpx.AsyncClient built by llm_service through a mock transport."""
+    real = httpx.AsyncClient
+    monkeypatch.setattr(
+        "app.services.llm_service.httpx.AsyncClient",
+        lambda **kwargs: real(transport=httpx.MockTransport(handler), **kwargs),
+    )
 
 
 @pytest.mark.asyncio
 async def test_list_models_returns_sorted_ids(monkeypatch):
-    fake_client = _FakeAsyncOpenAI(models=["llama-b", "llama-a"])
-    monkeypatch.setattr(
-        "app.services.llm_service.AsyncOpenAI", lambda **kwargs: fake_client
-    )
+    def handler(request):
+        assert str(request.url) == "https://example.com/v1/models"
+        assert request.headers["authorization"] == "Bearer key"
+        return httpx.Response(200, json={"data": [{"id": "llama-b"}, {"id": "llama-a"}]})
 
-    models = await list_models("key", "https://example.com/")
+    _mock_http(monkeypatch, handler)
 
-    assert models == ["llama-a", "llama-b"]
-    assert fake_client.closed is True
+    assert await list_models("key", "https://example.com/v1") == ["llama-a", "llama-b"]
 
 
 @pytest.mark.asyncio
 async def test_list_models_returns_empty_when_unsupported(monkeypatch):
-    fake_client = _FakeAsyncOpenAI(error=RuntimeError("not implemented"))
-    monkeypatch.setattr(
-        "app.services.llm_service.AsyncOpenAI", lambda **kwargs: fake_client
+    _mock_http(monkeypatch, lambda request: httpx.Response(404))
+
+    assert await list_models("key", "https://example.com/v1/") == []
+
+
+def _sse(*events: dict | str) -> bytes:
+    lines = [e if isinstance(e, str) else json.dumps(e) for e in events]
+    return "".join(f"data: {line}\n\n" for line in lines).encode()
+
+
+@pytest.mark.asyncio
+async def test_complete_streams_tokens_and_usage(monkeypatch):
+    def handler(request):
+        body = json.loads(request.content)
+        assert str(request.url) == "https://api.groq.com/openai/v1/chat/completions"
+        assert body["stream"] is True and body["messages"][0]["role"] == "system"
+        return httpx.Response(
+            200,
+            content=_sse(
+                {"choices": [{"delta": {"content": "Hel"}}]},
+                {"choices": [{"delta": {"content": "lo"}}]},
+                {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2}},
+                "[DONE]",
+            ),
+        )
+
+    _mock_http(monkeypatch, handler)
+    service = LlmService(_settings(GROQ_API_KEY="k"), [_credential("OTHER", "https://x/")])
+    seen: list[str] = []
+
+    async def on_token(token: str) -> None:
+        seen.append(token)
+
+    text, usage, metrics = await service.complete(
+        [Message(session_id="s", role="user", content="hi")], "sys", on_token
     )
 
-    models = await list_models("key", "https://example.com/")
+    assert text == "Hello" and seen == ["Hel", "lo"]
+    assert (usage.prompt_tokens, usage.completion_tokens) == (3, 2)
+    assert metrics.provider == "GROQ"
 
-    assert models == []
-    assert fake_client.closed is True
+
+@pytest.mark.asyncio
+async def test_complete_falls_back_on_rate_limit(monkeypatch):
+    def handler(request):
+        if "groq" in request.url.host:
+            return httpx.Response(429, text="rate limit exceeded")
+        return httpx.Response(200, content=_sse({"choices": [{"delta": {"content": "ok"}}]}))
+
+    _mock_http(monkeypatch, handler)
+    service = LlmService(_settings(GROQ_API_KEY="k", ZHIPU_API_KEY="z"))
+    service.providers[1] = LlmProvider("ZHIPU", "z", "m", "https://zhipu.example/v1/")
+
+    text, _, metrics = await service.complete([Message(session_id="s", role="user", content="hi")], "sys")
+
+    assert text == "ok" and metrics.provider == "ZHIPU"
+
+
+@pytest.mark.asyncio
+async def test_complete_raises_exhausted_on_non_retryable_error(monkeypatch):
+    _mock_http(monkeypatch, lambda request: httpx.Response(500, text="boom"))
+    service = LlmService(_settings(GROQ_API_KEY="k"))
+
+    with pytest.raises(ProvidersExhaustedError, match="500"):
+        await service.complete([Message(session_id="s", role="user", content="hi")], "sys")
