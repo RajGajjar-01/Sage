@@ -7,6 +7,7 @@ from rich.console import Console
 from app.cli.connect import _shortlist, connect_provider, pick_number
 from app.core.database import _SCHEMA
 from app.repositories.provider_repository import ProviderRepository
+from app.services.llm_service import ModelInfo
 
 
 @pytest.fixture
@@ -104,7 +105,7 @@ async def test_connect_lets_user_pick_from_live_model_list(providers):
     with (
         patch(
             "app.cli.connect.list_models",
-            AsyncMock(return_value=["model-a", "model-b"]),
+            AsyncMock(return_value=[ModelInfo("model-a"), ModelInfo("model-b")]),
         ),
         patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
         patch("rich.prompt.IntPrompt.ask", return_value=2),
@@ -119,7 +120,7 @@ async def test_connect_lets_user_pick_from_live_model_list(providers):
 async def test_connect_cancelled_by_zero_model_pick(providers):
     answers = iter(["GROQ", "my-api-key", ""])
     with (
-        patch("app.cli.connect.list_models", AsyncMock(return_value=["model-a"])),
+        patch("app.cli.connect.list_models", AsyncMock(return_value=[ModelInfo("model-a")])),
         patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
         patch("rich.prompt.IntPrompt.ask", return_value=0),
     ):
@@ -177,16 +178,16 @@ async def test_connect_openrouter_uses_default_endpoint(providers):
 
 
 def test_shortlist_filters_a_large_catalogue():
-    models = [f"vendor/model-{i}" for i in range(400)] + ["openai/gpt-4o-mini"]
+    models = [ModelInfo(f"vendor/model-{i}") for i in range(400)] + [ModelInfo("openai/gpt-4o-mini")]
 
     with patch("rich.prompt.Prompt.ask", return_value="gpt-4o"):
         shortlisted = _shortlist(_console(), models)
 
-    assert shortlisted == ["openai/gpt-4o-mini"]
+    assert shortlisted == [ModelInfo("openai/gpt-4o-mini")]
 
 
 def test_shortlist_caps_when_filter_is_skipped():
-    models = [f"vendor/model-{i}" for i in range(400)]
+    models = [ModelInfo(f"vendor/model-{i}") for i in range(400)]
 
     with patch("rich.prompt.Prompt.ask", return_value=""):
         shortlisted = _shortlist(_console(), models)
@@ -195,5 +196,5 @@ def test_shortlist_caps_when_filter_is_skipped():
 
 
 def test_shortlist_leaves_a_small_catalogue_alone():
-    models = ["a", "b", "c"]
+    models = [ModelInfo("a"), ModelInfo("b"), ModelInfo("c")]
     assert _shortlist(_console(), models) == models
