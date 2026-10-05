@@ -4,8 +4,7 @@ from importlib.metadata import version as package_version
 import typer
 from rich.console import Console
 
-from app.cli.menu import run_menu
-from app.cli.render import RichConsoleUI
+from app.cli.tui import SageApp, TuiAgentUI
 from app.core.config import settings
 from app.core.database import create_connection
 from app.core.sandbox import Sandbox
@@ -58,7 +57,8 @@ async def _run() -> None:
         except NoProviderConfiguredError:
             llm = None
 
-        orchestrator = AgentOrchestrator(
+        tui = SageApp(provider_repo)
+        tui.orchestrator = AgentOrchestrator(
             sandbox=sandbox,
             llm=llm,
             shell=ShellExecutor(sandbox, settings.SHELL_TIMEOUT_SECONDS),
@@ -67,14 +67,11 @@ async def _run() -> None:
             sessions=SessionRepository(connection),
             messages=MessageRepository(connection),
             executions=ExecutionRepository(connection),
-            ui=RichConsoleUI(console),
+            ui=TuiAgentUI(tui),
             settings=settings,
         )
 
-        try:
-            await run_menu(orchestrator, console, provider_repo)
-        except (KeyboardInterrupt, EOFError):
-            console.print("\n  [dim]Interrupted.[/]")
+        await tui.run_async()
     finally:
         await connection.close()
 

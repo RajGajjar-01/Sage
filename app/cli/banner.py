@@ -1,4 +1,3 @@
-from rich.console import Console
 from rich.text import Text
 
 _LINES = (
@@ -19,12 +18,13 @@ _GRADIENT = (
 )
 
 
-def print_banner(console: Console) -> None:
-    console.print()
+def banner() -> Text:
+    text = Text()
     for line, (r, g, b) in zip(_LINES, _GRADIENT, strict=True):
-        console.print(Text(line, style=f"rgb({r},{g},{b})"))
-    console.print()
-    console.print(
-        "  [dim]Sage Core [/][bold #F0AA00]●[/][dim] Sandboxed Workspace · Multi-Provider · Resumable Sessions[/]"
+        text.append(line + "\n", style=f"rgb({r},{g},{b})")
+    text.append("\n  Sage Core ", style="dim")
+    text.append("●", style="bold #F0AA00")
+    text.append(
+        " Sandboxed Workspace · Multi-Provider · Resumable Sessions", style="dim"
     )
-    console.print()
+    return text
