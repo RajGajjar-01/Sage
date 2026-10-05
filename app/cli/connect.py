@@ -3,7 +3,7 @@ from rich.prompt import IntPrompt, Prompt
 
 from app.models.provider import ProviderCredential
 from app.repositories.provider_repository import ProviderRepository
-from app.services.llm_service import list_models
+from app.services.llm_service import ModelInfo, list_models
 
 GOLD = "#F0AA00"
 
@@ -18,6 +18,9 @@ _KNOWN_DEFAULTS: dict[str, tuple[str, str | None]] = {
     "GEMINI": ("", "https://generativelanguage.googleapis.com/v1beta/openai/"),
     "OPENAI": ("", "https://api.openai.com/v1"),
 }
+
+# Shown after a model id; only providers that publish pricing get a tag.
+_TAGS = {True: " [green]free[/]", False: " [yellow]paid[/]", None: ""}
 
 # OpenRouter alone lists 400+ models; past this many, filter before listing.
 _MAX_LISTED_MODELS = 30
@@ -94,13 +97,13 @@ async def _select_model(
         )
 
     models = _shortlist(console, models)
-    for i, model_id in enumerate(models, start=1):
-        console.print(f"  {i}) {model_id}")
+    for i, model in enumerate(models, start=1):
+        console.print(f"  {i}) {model.id}{_TAGS[model.free]}")
     pick = pick_number(console, "  Pick a model # (0 to cancel)", len(models))
-    return models[pick - 1] if pick else None
+    return models[pick - 1].id if pick else None
 
 
-def _shortlist(console: Console, models: list[str]) -> list[str]:
+def _shortlist(console: Console, models: list[ModelInfo]) -> list[ModelInfo]:
     """Narrow a long provider catalogue down to something pickable."""
     if len(models) <= _MAX_LISTED_MODELS:
         return models
@@ -115,7 +118,7 @@ def _shortlist(console: Console, models: list[str]) -> list[str]:
         .lower()
     )
     if needle:
-        matches = [m for m in models if needle in m.lower()]
+        matches = [m for m in models if needle in m.id.lower()]
         if matches:
             models = matches
         else:

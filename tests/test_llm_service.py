@@ -9,6 +9,7 @@ from app.models.provider import ProviderCredential
 from app.services.llm_service import (
     LlmProvider,
     LlmService,
+    ModelInfo,
     NoProviderConfiguredError,
     ProvidersExhaustedError,
     is_rate_limit_error,
@@ -212,7 +213,28 @@ async def test_list_models_returns_sorted_ids(monkeypatch):
 
     _mock_http(monkeypatch, handler)
 
-    assert await list_models("key", "https://example.com/v1") == ["llama-a", "llama-b"]
+    assert await list_models("key", "https://example.com/v1") == [
+        ModelInfo("llama-a"),
+        ModelInfo("llama-b"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_models_flags_free_and_paid_from_pricing(monkeypatch):
+    free = {"prompt": "0", "completion": "0"}
+    paid = {"prompt": "0.000001", "completion": "0.000002"}
+    data = [
+        {"id": "b-paid", "pricing": paid},
+        {"id": "z-free", "pricing": free},
+        {"id": "a-unknown"},
+    ]
+    _mock_http(monkeypatch, lambda request: httpx.Response(200, json={"data": data}))
+
+    assert await list_models("key", "https://example.com/v1") == [
+        ModelInfo("z-free", True),
+        ModelInfo("a-unknown", None),
+        ModelInfo("b-paid", False),
+    ]
 
 
 @pytest.mark.asyncio

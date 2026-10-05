@@ -63,6 +63,12 @@ class LlmMetrics:
     usage: TokenUsage
 
 
+@dataclass(frozen=True)
+class ModelInfo:
+    id: str
+    free: bool | None = None  # None = the provider's /models doesn't expose pricing
+
+
 def load_providers(
     settings: Settings, stored: list[ProviderCredential] | None = None
 ) -> list[LlmProvider]:
@@ -102,10 +108,22 @@ def _build_client(api_key: str, endpoint: str, timeout: float) -> httpx.AsyncCli
     )
 
 
+def _is_free(entry: dict[str, Any]) -> bool | None:
+    """Only providers that publish per-model pricing (e.g. OpenRouter) can say free vs paid."""
+    pricing = entry.get("pricing")
+    if not isinstance(pricing, dict) or not pricing:
+        return None
+    try:
+        return all(float(price) == 0 for price in pricing.values())
+    except (TypeError, ValueError):
+        return None
+
+
 async def list_models(
     api_key: str, endpoint: str, timeout_seconds: float = 10.0
-) -> list[str]:
-    """Best-effort fetch of available model IDs from an OpenAI-compatible /models endpoint.
+) -> list[ModelInfo]:
+    """Best-effort fetch of available models from an OpenAI-compatible /models endpoint,
+    free ones first, then by id.
 
     Returns an empty list if the provider doesn't implement it or the request fails --
     callers should fall back to letting the user type a model name by hand."""
@@ -113,7 +131,11 @@ async def list_models(
         async with _build_client(api_key, endpoint, timeout_seconds) as client:
             response = await client.get("models")
             response.raise_for_status()
-            return sorted(model["id"] for model in response.json()["data"])
+            models = [
+                ModelInfo(entry["id"], _is_free(entry))
+                for entry in response.json()["data"]
+            ]
+            return sorted(models, key=lambda m: (m.free is not True, m.id))
     except Exception:
         return []
 
