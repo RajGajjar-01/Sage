@@ -23,7 +23,9 @@ uv sync
 uv run sage
 ```
 
-No `.env` required to get started: Sage boots straight into the menu even with zero providers configured. Type `/connect` at the chat prompt anytime to add or update a provider (saved to the local SQLite database, no restart needed) — if you send a message before connecting one, Sage just tells you to run `/connect` first. `TAVILY_API_KEY` is optional and only powers the prompt enhancer.
+No `.env` required to get started: Sage opens a full-screen chat even with zero providers configured. Type `/connect` (or press `ctrl+p` → Connect a provider) to pick a provider from a searchable list, paste its API key, then choose a model from the provider's live catalogue — OpenRouter models are grouped into Free and Paid. Credentials are saved to the local SQLite database, no restart needed. `TAVILY_API_KEY` is optional and only powers the prompt enhancer.
+
+Commands: `/new`, `/sessions` (resume a past chat), `/model` (switch provider), `/connect`, `/help`, `/exit`. `ctrl+p` opens the command list, `esc` interrupts the agent, `ctrl+c` quits.
 
 ## Running the API
 

@@ -1,141 +1,122 @@
-from rich.console import Console
-from rich.prompt import IntPrompt, Prompt
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Protocol
 
 from app.models.provider import ProviderCredential
 from app.repositories.provider_repository import ProviderRepository
 from app.services.llm_service import ModelInfo, list_models
 
-GOLD = "#F0AA00"
 
-# name -> (default model, default endpoint). An empty model means "no sensible
-# default, let the live /models list decide"; a None endpoint means the connect
-# flow has to build it (Cloudflare needs the account id).
-_KNOWN_DEFAULTS: dict[str, tuple[str, str | None]] = {
-    "GROQ": ("llama-3.3-70b-versatile", "https://api.groq.com/openai/v1/"),
-    "ZHIPU": ("glm-4.7-flash", "https://open.bigmodel.cn/api/paas/v4/"),
-    "CLOUDFLARE": ("@cf/meta/llama-3.1-8b-instruct", None),
-    "OPENROUTER": ("", "https://openrouter.ai/api/v1"),
-    "GEMINI": ("", "https://generativelanguage.googleapis.com/v1beta/openai/"),
-    "OPENAI": ("", "https://api.openai.com/v1"),
+@dataclass(frozen=True)
+class Choice:
+    label: str
+    value: str
+    hint: str = ""
+    section: str = ""
+
+
+@dataclass(frozen=True)
+class KnownProvider:
+    label: str
+    model: str  # "" = no sensible default, let the live /models list decide
+    endpoint: str | None  # None = built by the flow (Cloudflare needs the account id)
+    hint: str = ""
+
+
+KNOWN_PROVIDERS: dict[str, KnownProvider] = {
+    "OPENROUTER": KnownProvider(
+        "OpenRouter", "", "https://openrouter.ai/api/v1", "free and paid models"
+    ),
+    "GROQ": KnownProvider(
+        "Groq",
+        "llama-3.3-70b-versatile",
+        "https://api.groq.com/openai/v1/",
+        "fast inference",
+    ),
+    "GEMINI": KnownProvider(
+        "Google Gemini",
+        "",
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+    ),
+    "OPENAI": KnownProvider("OpenAI", "", "https://api.openai.com/v1", "API key"),
+    "CLOUDFLARE": KnownProvider(
+        "Cloudflare Workers AI",
+        "@cf/meta/llama-3.1-8b-instruct",
+        None,
+        "needs account ID",
+    ),
+    "ZHIPU": KnownProvider(
+        "Zhipu GLM", "glm-4.7-flash", "https://open.bigmodel.cn/api/paas/v4/"
+    ),
 }
+OTHER_PROVIDER = "__other__"
 
-# Shown after a model id; only providers that publish pricing get a tag.
-_TAGS = {True: " [green]free[/]", False: " [yellow]paid[/]", None: ""}
+Pick = Callable[[str, list[Choice]], Awaitable[str | None]]
 
-# OpenRouter alone lists 400+ models; past this many, filter before listing.
-_MAX_LISTED_MODELS = 30
+
+class Ask(Protocol):
+    def __call__(
+        self, title: str, *, password: bool = False, default: str = ""
+    ) -> Awaitable[str | None]: ...
+
+
+def provider_choices() -> list[Choice]:
+    choices = [
+        Choice(p.label, name, p.hint, "Popular") for name, p in KNOWN_PROVIDERS.items()
+    ]
+    choices.append(
+        Choice("Other", OTHER_PROVIDER, "any OpenAI-compatible endpoint", "Custom")
+    )
+    return choices
+
+
+def model_choices(models: list[ModelInfo]) -> list[Choice]:
+    sections = {True: "Free", False: "Paid", None: "Models"}
+    return [Choice(m.id, m.id, section=sections[m.free]) for m in models]
 
 
 async def connect_provider(
-    console: Console, providers: ProviderRepository
+    pick: Pick,
+    ask: Ask,
+    providers: ProviderRepository,
+    status: Callable[[str], None] = lambda _: None,
 ) -> ProviderCredential | None:
-    """Prompt for a provider name and API key, then persist the credential to the database."""
-    name = (
-        Prompt.ask(
-            "  Provider name (e.g. GROQ, ZHIPU, CLOUDFLARE, OPENAI)", console=console
-        )
-        .strip()
-        .upper()
-    )
-    if not name:
-        console.print("  [dim]Cancelled.[/]")
+    """Walk the user through provider -> API key -> model, then persist the credential.
+
+    Returns None if the user cancels (or leaves a required answer empty) at any step."""
+    name = await pick("Connect a provider", provider_choices())
+    if name is None:
         return None
 
-    api_key = Prompt.ask("  API key", password=True, console=console).strip()
-    if not api_key:
-        console.print("  [red]API key cannot be empty.[/]")
-        return None
-
-    default_model, default_endpoint = _KNOWN_DEFAULTS.get(name, ("", ""))
-
-    if name == "CLOUDFLARE" and default_endpoint is None:
-        account_id = Prompt.ask("  Cloudflare Account ID", console=console).strip()
-        if not account_id:
-            console.print("  [red]Cloudflare Account ID is required.[/]")
-            return None
-        default_endpoint = (
-            f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
-        )
-
-    endpoint = (
-        Prompt.ask(
-            "  Endpoint (OpenAI-compatible base URL)",
-            default=default_endpoint or "",
-            console=console,
+    known = KNOWN_PROVIDERS.get(name)
+    if known is None:
+        name = ((await ask("Provider name")) or "").strip().upper()
+        endpoint: str | None = (
+            (await ask("Endpoint (OpenAI-compatible base URL)")) or ""
         ).strip()
-        or default_endpoint
-    )
-    if not endpoint:
-        console.print(
-            f"  [red]An endpoint is required for a provider not built in ({', '.join(_KNOWN_DEFAULTS)}).[/]"
-        )
+        if not name or not endpoint:
+            return None
+        label, default_model = name, ""
+    else:
+        label, endpoint, default_model = known.label, known.endpoint, known.model
+
+    api_key = ((await ask(f"{label} API key", password=True)) or "").strip()
+    if not api_key:
         return None
 
-    model = await _select_model(console, api_key, endpoint, default_model)
-    if not model:
-        console.print("  [dim]No model selected. Cancelled.[/]")
-        return None
+    if endpoint is None:
+        account_id = ((await ask("Cloudflare account ID")) or "").strip()
+        if not account_id:
+            return None
+        endpoint = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
 
-    credential = await providers.upsert(name, api_key, model, endpoint)
-    console.print(
-        f"  [{GOLD}]✓[/] Connected {credential.name} ({credential.model}) — saved locally."
-    )
-    return credential
-
-
-async def _select_model(
-    console: Console, api_key: str, endpoint: str, default_model: str
-) -> str | None:
-    """Let the user pick from the provider's live /models list, falling back to free text."""
-    console.print("  [dim]Fetching available models...[/]")
+    status(f"Fetching {label} models...")
     models = await list_models(api_key, endpoint)
+    if models:
+        model = await pick(f"Select a {label} model", model_choices(models))
+    else:
+        model = ((await ask("Model", default=default_model)) or "").strip()
+    if not model:
+        return None
 
-    if not models:
-        return (
-            Prompt.ask("  Model", default=default_model, console=console).strip()
-            or default_model
-        )
-
-    models = _shortlist(console, models)
-    for i, model in enumerate(models, start=1):
-        console.print(f"  {i}) {model.id}{_TAGS[model.free]}")
-    pick = pick_number(console, "  Pick a model # (0 to cancel)", len(models))
-    return models[pick - 1].id if pick else None
-
-
-def _shortlist(console: Console, models: list[ModelInfo]) -> list[ModelInfo]:
-    """Narrow a long provider catalogue down to something pickable."""
-    if len(models) <= _MAX_LISTED_MODELS:
-        return models
-
-    needle = (
-        Prompt.ask(
-            f"  {len(models)} models available — filter by name (Enter to skip)",
-            default="",
-            console=console,
-        )
-        .strip()
-        .lower()
-    )
-    if needle:
-        matches = [m for m in models if needle in m.id.lower()]
-        if matches:
-            models = matches
-        else:
-            console.print("  [dim]No match for that filter.[/]")
-
-    if len(models) > _MAX_LISTED_MODELS:
-        console.print(
-            f"  [dim]Showing the first {_MAX_LISTED_MODELS} of {len(models)}.[/]"
-        )
-    return models[:_MAX_LISTED_MODELS]
-
-
-def pick_number(console: Console, prompt: str, count: int) -> int:
-    """Ask for a 1-based choice, re-prompting until it is in range (0 cancels)."""
-    return IntPrompt.ask(
-        prompt,
-        choices=[str(i) for i in range(count + 1)],
-        show_choices=False,
-        console=console,
-    )
+    return await providers.upsert(name, api_key, model, endpoint)

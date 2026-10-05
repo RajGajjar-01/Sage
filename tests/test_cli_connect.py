@@ -2,9 +2,13 @@ from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 import pytest
-from rich.console import Console
 
-from app.cli.connect import _shortlist, connect_provider, pick_number
+from app.cli.connect import (
+    OTHER_PROVIDER,
+    Choice,
+    connect_provider,
+    model_choices,
+)
 from app.core.database import _SCHEMA
 from app.repositories.provider_repository import ProviderRepository
 from app.services.llm_service import ModelInfo
@@ -19,182 +23,109 @@ async def providers():
         yield ProviderRepository(conn)
 
 
-def _console() -> Console:
-    return Console(quiet=True)
+def _scripted(picks: list[str | None], answers: list[str | None]):
+    """Fake pick/ask callables that replay canned answers in order."""
+    pick_iter, answer_iter = iter(picks), iter(answers)
+    seen: list[list[Choice]] = []
+
+    async def pick(title: str, choices: list[Choice]) -> str | None:
+        seen.append(choices)
+        return next(pick_iter)
+
+    async def ask(
+        title: str, *, password: bool = False, default: str = ""
+    ) -> str | None:
+        answer = next(answer_iter)
+        return default if answer == "<default>" else answer
+
+    return pick, ask, seen
 
 
-def _no_models():
-    return patch("app.cli.connect.list_models", AsyncMock(return_value=[]))
+def _models(*models: ModelInfo):
+    return patch("app.cli.connect.list_models", AsyncMock(return_value=list(models)))
 
 
 @pytest.mark.asyncio
-async def test_connect_known_provider_uses_default_model_and_endpoint(providers):
-    answers = iter(["GROQ", "my-api-key", "", ""])
-    with (
-        _no_models(),
-        patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
-    ):
-        credential = await connect_provider(_console(), providers)
+async def test_connect_known_provider_falls_back_to_default_model(providers):
+    pick, ask, _ = _scripted(["GROQ"], ["my-api-key", "<default>"])
+    with _models():
+        credential = await connect_provider(pick, ask, providers)
 
     assert credential is not None
     assert credential.name == "GROQ"
     assert credential.api_key == "my-api-key"
     assert credential.model == "llama-3.3-70b-versatile"
     assert credential.endpoint == "https://api.groq.com/openai/v1/"
+    assert (await providers.get("GROQ")) is not None
 
 
 @pytest.mark.asyncio
-async def test_connect_persists_to_repository(providers):
-    answers = iter(["ZHIPU", "key-123", "", ""])
-    with (
-        _no_models(),
-        patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
-    ):
-        await connect_provider(_console(), providers)
+async def test_connect_picks_from_live_model_list(providers):
+    pick, ask, seen = _scripted(["OPENROUTER", "b-paid"], ["my-api-key"])
+    with _models(ModelInfo("a-free", True), ModelInfo("b-paid", False)):
+        credential = await connect_provider(pick, ask, providers)
 
-    stored = await providers.get("ZHIPU")
-    assert stored is not None
-    assert stored.api_key == "key-123"
+    assert credential is not None
+    assert credential.endpoint == "https://openrouter.ai/api/v1"
+    assert credential.model == "b-paid"
+    assert [(c.value, c.section) for c in seen[1]] == [
+        ("a-free", "Free"),
+        ("b-paid", "Paid"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("picks", "answers"),
+    [
+        ([None], []),  # esc on the provider list
+        (["GROQ"], [""]),  # empty API key
+        (["GROQ"], [None]),  # esc on the API key
+        (["CLOUDFLARE"], ["key", ""]),  # missing Cloudflare account id
+        ([OTHER_PROVIDER], ["CUSTOM", ""]),  # custom provider without endpoint
+    ],
+)
+@pytest.mark.asyncio
+async def test_connect_cancels_on_missing_answers(providers, picks, answers):
+    pick, ask, _ = _scripted(picks, answers)
+    with _models():
+        assert await connect_provider(pick, ask, providers) is None
 
 
 @pytest.mark.asyncio
-async def test_connect_cancelled_with_empty_name_returns_none(providers):
-    answers = iter([""])
-    with patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)):
-        credential = await connect_provider(_console(), providers)
-
-    assert credential is None
+async def test_connect_cancelled_on_model_list(providers):
+    pick, ask, _ = _scripted(["GROQ", None], ["key"])
+    with _models(ModelInfo("model-a")):
+        assert await connect_provider(pick, ask, providers) is None
 
 
 @pytest.mark.asyncio
-async def test_connect_rejects_empty_api_key(providers):
-    answers = iter(["GROQ", ""])
-    with patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)):
-        credential = await connect_provider(_console(), providers)
-
-    assert credential is None
-
-
-@pytest.mark.asyncio
-async def test_connect_unknown_provider_requires_endpoint(providers):
-    answers = iter(["CUSTOM", "key", ""])
-    with patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)):
-        credential = await connect_provider(_console(), providers)
-
-    assert credential is None
-
-
-@pytest.mark.asyncio
-async def test_connect_unknown_provider_with_model_and_endpoint_succeeds(providers):
-    answers = iter(["CUSTOM", "key", "https://custom.example/v1/", "custom-model"])
-    with (
-        _no_models(),
-        patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
-    ):
-        credential = await connect_provider(_console(), providers)
+async def test_connect_custom_provider(providers):
+    pick, ask, _ = _scripted(
+        [OTHER_PROVIDER],
+        ["custom", "https://custom.example/v1/", "key", "custom-model"],
+    )
+    with _models():
+        credential = await connect_provider(pick, ask, providers)
 
     assert credential is not None
     assert credential.name == "CUSTOM"
-    assert credential.model == "custom-model"
     assert credential.endpoint == "https://custom.example/v1/"
-
-
-@pytest.mark.asyncio
-async def test_connect_lets_user_pick_from_live_model_list(providers):
-    answers = iter(["GROQ", "my-api-key", ""])
-    with (
-        patch(
-            "app.cli.connect.list_models",
-            AsyncMock(return_value=[ModelInfo("model-a"), ModelInfo("model-b")]),
-        ),
-        patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
-        patch("rich.prompt.IntPrompt.ask", return_value=2),
-    ):
-        credential = await connect_provider(_console(), providers)
-
-    assert credential is not None
-    assert credential.model == "model-b"
-
-
-@pytest.mark.asyncio
-async def test_connect_cancelled_by_zero_model_pick(providers):
-    answers = iter(["GROQ", "my-api-key", ""])
-    with (
-        patch("app.cli.connect.list_models", AsyncMock(return_value=[ModelInfo("model-a")])),
-        patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
-        patch("rich.prompt.IntPrompt.ask", return_value=0),
-    ):
-        credential = await connect_provider(_console(), providers)
-
-    assert credential is None
+    assert credential.model == "custom-model"
 
 
 @pytest.mark.asyncio
 async def test_connect_cloudflare_builds_endpoint_from_account_id(providers):
-    answers = iter(["CLOUDFLARE", "my-api-key", "my-account-id", "", ""])
-    with (
-        _no_models(),
-        patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
-    ):
-        credential = await connect_provider(_console(), providers)
+    pick, ask, _ = _scripted(["CLOUDFLARE"], ["key", "acct-1", "<default>"])
+    with _models():
+        credential = await connect_provider(pick, ask, providers)
 
     assert credential is not None
-    assert credential.name == "CLOUDFLARE"
     assert (
         credential.endpoint
-        == "https://api.cloudflare.com/client/v4/accounts/my-account-id/ai/v1"
+        == "https://api.cloudflare.com/client/v4/accounts/acct-1/ai/v1"
     )
     assert credential.model == "@cf/meta/llama-3.1-8b-instruct"
 
 
-@pytest.mark.asyncio
-async def test_connect_cloudflare_requires_account_id(providers):
-    answers = iter(["CLOUDFLARE", "my-api-key", ""])
-    with patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)):
-        credential = await connect_provider(_console(), providers)
-
-    assert credential is None
-
-
-def test_pick_number_only_accepts_zero_through_count():
-    with patch("rich.prompt.IntPrompt.ask", return_value=2) as ask:
-        assert pick_number(_console(), "pick", 3) == 2
-
-    assert ask.call_args.kwargs["choices"] == ["0", "1", "2", "3"]
-
-
-@pytest.mark.asyncio
-async def test_connect_openrouter_uses_default_endpoint(providers):
-    answers = iter(["OPENROUTER", "my-api-key", "", "openai/gpt-4o-mini"])
-    with (
-        _no_models(),
-        patch("rich.prompt.Prompt.ask", side_effect=lambda *a, **k: next(answers)),
-    ):
-        credential = await connect_provider(_console(), providers)
-
-    assert credential is not None
-    assert credential.endpoint == "https://openrouter.ai/api/v1"
-    assert credential.model == "openai/gpt-4o-mini"
-
-
-def test_shortlist_filters_a_large_catalogue():
-    models = [ModelInfo(f"vendor/model-{i}") for i in range(400)] + [ModelInfo("openai/gpt-4o-mini")]
-
-    with patch("rich.prompt.Prompt.ask", return_value="gpt-4o"):
-        shortlisted = _shortlist(_console(), models)
-
-    assert shortlisted == [ModelInfo("openai/gpt-4o-mini")]
-
-
-def test_shortlist_caps_when_filter_is_skipped():
-    models = [ModelInfo(f"vendor/model-{i}") for i in range(400)]
-
-    with patch("rich.prompt.Prompt.ask", return_value=""):
-        shortlisted = _shortlist(_console(), models)
-
-    assert len(shortlisted) == 30
-
-
-def test_shortlist_leaves_a_small_catalogue_alone():
-    models = [ModelInfo("a"), ModelInfo("b"), ModelInfo("c")]
-    assert _shortlist(_console(), models) == models
+def test_model_choices_sections_unknown_pricing_as_models():
+    assert model_choices([ModelInfo("x")]) == [Choice("x", "x", section="Models")]
